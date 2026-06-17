@@ -1,0 +1,87 @@
+name: ${PROJECT_NAME:?PROJECT_NAME}
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME:?PROJECT_NAME}-redis
+    command: redis-server --save "" --appendonly no
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1m
+      timeout: 3s
+      retries: 5
+    ports:
+      - "${REDIS_PORT:?REDIS_PORT}:6379"
+    networks:
+      - webnet
+
+  dev-ui:
+    build:
+      context: .
+      dockerfile: docker/dev-ui/Dockerfile
+    image: ${PROJECT_NAME:?PROJECT_NAME}-dev-ui
+    container_name: ${PROJECT_NAME:?PROJECT_NAME}-dev-ui
+    hostname: dev
+    working_dir: /peonveloz/ui
+    command: sh -lc "bun install && bun --bun run dev --host 0.0.0.0"
+    tty: true
+    stdin_open: true
+    environment:
+      NODE_ENV: development
+      API_URL: ${API_URL}
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "${UI_PORT:?UI_PORT}:5173"
+    volumes:
+      - ${UI_PATH:?UI_PATH}:/peonveloz/ui
+      - dev-ui-node-modules:/peonveloz/ui/node_modules
+      - dev-ui-bun-cache:/home/${BUN_USERNAME:-bun}/.bun/install/cache
+    networks:
+      - webnet
+
+  dev-api:
+    build:
+      context: .
+      dockerfile: docker/dev-api/Dockerfile
+    image: ${PROJECT_NAME:?PROJECT_NAME}-dev-api
+    container_name: ${PROJECT_NAME:?PROJECT_NAME}-dev-api
+    hostname: dev
+    working_dir: /peonveloz/api
+    command: sh -lc "bun install && bun run db:migrate && bun run dev"
+    tty: true
+    stdin_open: true
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: ${API_PORT:?API_PORT}
+      SQLITE_PATH: ${SQLITE_PATH:?SQLITE_PATH}
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL}
+      CSRF_SECRET: ${CSRF_SECRET:?CSRF_SECRET}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL}
+      LICHESS_CLIENT_ID: ${LICHESS_CLIENT_ID:?LICHESS_CLIENT_ID}
+      PUSH_NOTIFICATION_API_KEY: ${PUSH_NOTIFICATION_API_KEY:?PUSH_NOTIFICATION_API_KEY}
+    ports:
+      - "${API_PORT:?API_PORT}:4000"
+    volumes:
+      - ${API_PATH:?API_PATH}:/peonveloz/api
+      - dev-api-node-modules:/peonveloz/api/node_modules
+      - dev-api-bun-cache:/home/${BUN_USERNAME:-bun}/.bun/install/cache
+      - dev-api-sqlite-data:/peonveloz/api/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - webnet
+
+networks:
+  webnet:
+    driver: bridge
+
+volumes:
+  dev-ui-node-modules:
+  dev-ui-bun-cache:
+  dev-api-node-modules:
+  dev-api-bun-cache:
+  dev-api-sqlite-data:

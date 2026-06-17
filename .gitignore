@@ -1,0 +1,5 @@
+.env.development
+.env.production
+!.env.development.example
+!.env.production.example
+.DS_Store

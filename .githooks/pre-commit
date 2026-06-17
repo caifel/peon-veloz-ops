@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+set -eu
+
+# ── API Types Staleness Check ─────────────────────────────────────
+# Runs `make api-types-check` to verify that web/src/api/generated/schema.ts
+# matches the current API Swagger schema.
+#
+# Requires Docker to be running and dev-api + dev-web containers reachable.
+# Silently skips when Docker is not available (e.g. during rebase, non-ops work).
+#
+# Install: make hooks-install  (or copy to .git/hooks/pre-commit)
+
+if ! command -v docker >/dev/null 2>&1; then
+  exit 0
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  exit 0
+fi
+
+ops_dir="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$ops_dir"
+
+make api-types-check
