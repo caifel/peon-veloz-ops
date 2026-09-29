@@ -1,7 +1,7 @@
 COMPOSE=docker compose --env-file .env.development
 COMPOSE_PROD=docker compose -f docker-compose.prod.yml --env-file .env.production
 
-.PHONY: build up down logs api-types api-types-check api-test db-migration-refresh db-migrate db-seed db-reset db-rebuild shell-api sqlite-api logs-api status clean prod prod-api smoke-test verify hooks-install help h
+.PHONY: build up down logs api-types api-types-check api-test db-migration-refresh db-migrate db-seed db-reset db-rebuild shell-api sqlite-api logs-api worker worker-logs register-token status clean prod prod-api prod-worker smoke-test verify hooks-install help h
 
 # @group Build
 
@@ -10,21 +10,25 @@ build: ## [dev] Build all development Docker images.
 
 # @group Dev App
 
-up: ## [dev] Start dev-api + dev-ui, then refresh ui API types.
+up: ## [dev] Start dev-api + dev-ui + dev-worker, then refresh ui-astro API types.
+	@$(COMPOSE) run --rm dev-api sh -lc "bun install && if [ ! -f /peonveloz/api/data/app.db ]; then bun run db:push; fi && bun run db:seed"
 	@scripts/sync-api-types.sh
 
-down: ## [dev] Stop and remove dev-ui + dev-api while keeping named volumes.
-	$(COMPOSE) rm -sf dev-ui dev-api
+down: ## [dev] Stop and remove dev-ui + dev-api + dev-worker while keeping named volumes.
+	$(COMPOSE) rm -sf dev-ui dev-api dev-worker
 
-logs: ## [dev] Follow dev-ui + dev-api logs.
-	$(COMPOSE) logs -f dev-api dev-ui
+reload-env: ## [dev] Recreate dev-api + dev-worker containers to pick up new .env.development values.
+	$(COMPOSE) up -d dev-api dev-worker
+
+logs: ## [dev] Follow dev-ui + dev-api + dev-worker logs.
+	$(COMPOSE) logs -f dev-api dev-ui dev-worker
 
 # @group API
 
-api-types: ## [dev] Regenerate ui API types from the running dev-api Swagger schema.
+api-types: ## [dev] Regenerate ui-astro API types from the running dev-api Swagger schema.
 	@scripts/sync-api-types.sh
 
-api-types-check: ## [dev] Check that generated ui API types match the running dev-api Swagger schema.
+api-types-check: ## [dev] Check that generated ui-astro API types match the running dev-api Swagger schema.
 	@scripts/sync-api-types.sh --check
 
 api-test: ## [dev] Run the API test suite inside dev-api.
@@ -56,6 +60,18 @@ sqlite-api: ## [dev] Open the dev-api SQLite database.
 logs-api: ## [dev] Follow dev-api container logs.
 	$(COMPOSE) logs -f dev-api
 
+worker: ## [dev] Start the WhatsApp worker.
+	$(COMPOSE) up -d dev-worker
+
+worker-logs: ## [dev] Follow dev-worker container logs.
+	$(COMPOSE) logs -f dev-worker
+
+# @group Dev Tokens
+
+register-token: ## [dev] Mint a /register link: make register-token PHONE=799999999 SLUG=torneo-intercolegial
+	@$(COMPOSE) up -d dev-api >/dev/null 2>&1 || { echo "error: could not start dev-api — run 'make up' first" >&2; exit 1; }
+	@$(COMPOSE) exec -T dev-api bun scripts/dev-register-token.ts "$(PHONE)" "$(SLUG)"
+
 # @group Utilities
 
 smoke-test: ## [dev] Start dev-api if needed, then run a quick health check.
@@ -79,11 +95,14 @@ clean: ## [dev] Stop all dev containers and delete development named volumes.
 
 # @group Production-Like Local Testing
 
-prod: ## [prod] Build and run the production API container (API + Vue static files).
+prod: ## [prod] Build and run production API + worker (API serves Astro static files).
+	$(COMPOSE_PROD) up --build prod-api prod-worker
+
+prod-api: ## [prod] Build and run the production API container only.
 	$(COMPOSE_PROD) up --build prod-api
 
-prod-api: ## [prod] Build and run the production API container.
-	$(COMPOSE_PROD) up --build prod-api
+prod-worker: ## [prod] Run the production worker container.
+	$(COMPOSE_PROD) up -d prod-worker
 
 # @group Helpers
 

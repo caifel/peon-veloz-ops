@@ -1,10 +1,10 @@
-# Stage 1: Build Vue frontend
-FROM oven/bun:1-debian AS ui-builder
-WORKDIR /ui
-COPY ui/package.json ui/bun.lock* ./
-RUN bun install --frozen-lockfile
-COPY ui/ ./
-RUN bun run build
+# Stage 1: Build Astro frontend
+FROM node:22-slim AS ui-builder
+WORKDIR /ui-astro
+COPY ui-astro/package.json ui-astro/package-lock.json ./
+RUN npm ci
+COPY ui-astro/ ./
+RUN npm run build
 
 # Stage 2: Build and run API
 FROM oven/bun:1-debian AS runner
@@ -21,7 +21,7 @@ COPY api/package.json api/bun.lock* ./
 RUN bun install --frozen-lockfile
 
 COPY api/ ./
-COPY --from=ui-builder /ui/dist ./public
+COPY --from=ui-builder /ui-astro/dist ./public
 
 ENV NODE_ENV=production
 

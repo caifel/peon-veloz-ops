@@ -1,9 +1,12 @@
-FROM oven/bun:1-debian
+# Development image for the Astro UI (../ui-astro).
+#
+# Uses Node 22 to match the production Astro build stage in
+# ops/docker/prod-api/Dockerfile, so `npm install` behaves the same here and
+# in the prod image.
+FROM node:22-slim
 
-ARG USERNAME=mario
-
-ENV BUN_INSTALL=/home/${USERNAME}/.bun \
-    PATH=/home/${USERNAME}/.bun/bin:$PATH
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FUND=false
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -11,13 +14,13 @@ RUN apt-get update \
       curl \
       git \
       openssl \
-    && usermod --login ${USERNAME} --move-home --home /home/${USERNAME} bun \
-    && groupmod --new-name ${USERNAME} bun \
-    && mkdir -p /home/${USERNAME}/.bun/install/cache /peonveloz/ui/node_modules \
-    && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} /peonveloz/ui \
+    && mkdir -p /home/node/.npm /peonveloz/ui-astro/node_modules \
+    && chown -R node:node /home/node /peonveloz/ui-astro \
     && rm -rf /var/lib/apt/lists/*
 
-USER ${USERNAME}
-WORKDIR /peonveloz/ui
+USER node
+WORKDIR /peonveloz/ui-astro
 
-CMD ["bun", "--bun", "run", "dev", "--hostname", "0.0.0.0"]
+EXPOSE 4321
+
+CMD ["npm", "run", "dev"]

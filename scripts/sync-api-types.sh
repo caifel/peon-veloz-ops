@@ -2,18 +2,18 @@
 set -eu
 
 default_schema_url="http://dev-api:4000/swagger/json"
-default_ui_dir="/peonveloz/ui"
+default_ui_dir="/peonveloz/ui-astro"
 generated_types_path="src/api/generated/schema.ts"
 
 usage() {
   cat <<'EOF'
 usage: sync-api-types.sh [--check]
 
-Refresh the API-backed ui types from the dev API Swagger schema.
+Refresh the API-backed ui-astro types from the dev API Swagger schema.
 
 From the host, the script starts dev-api and dev-ui if they are not
 already running, waits for dev-api Swagger through the Docker network,
-then generates or checks ui/src/api/generated/schema.ts.
+then generates or checks ui-astro/src/api/generated/schema.ts.
 
   --check  Verify generated types are up to date without overwriting.
 EOF
@@ -23,16 +23,23 @@ fetch_openapi_schema() {
   schema_url="$1"
   spec_out="$2"
 
-  SPEC_URL="$schema_url" SPEC_OUT="$spec_out" bun -e '
+  SPEC_URL="$schema_url" SPEC_OUT="$spec_out" node -e '
 const url = process.env.SPEC_URL;
 const out = process.env.SPEC_OUT;
 console.log("Fetching " + url + " ...");
-const response = await fetch(url);
-if (!response.ok) {
-  console.error("Failed to fetch spec: " + response.status + " " + response.statusText);
-  process.exit(1);
-}
-await Bun.write(out, await response.text());
+fetch(url)
+  .then(async (response) => {
+    if (!response.ok) {
+      console.error("Failed to fetch spec: " + response.status + " " + response.statusText);
+      process.exit(1);
+    }
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(out, await response.text());
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
 '
 }
 
@@ -46,7 +53,7 @@ render_types() {
     printf '%s\n' "// Source: $schema_url"
     printf '%s\n' "// Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '\n\n'
-    bun run openapi-typescript "$spec"
+    npx --no-install openapi-typescript "$spec"
   } >"$generated"
 }
 
@@ -87,7 +94,7 @@ generate_types() {
   ui_dir="$3"
 
   cd "$ui_dir"
-  bun install
+  npm install
 
   spec="/tmp/peonveloz-openapi.json"
   generated="/tmp/peonveloz-schema.ts"
@@ -101,6 +108,7 @@ generate_types() {
     return 0
   fi
 
+  mkdir -p "$(dirname "$out")"
   mv "$generated" "$out"
   printf 'Types written to %s\n' "$out"
 }
@@ -112,7 +120,7 @@ wait_for_http() {
   i=1
 
   while [ "$i" -le "$attempts" ]; do
-    if URL="$url" bun -e 'const r = await fetch(process.env.URL); process.exit(r.ok ? 0 : 1)' >/dev/null 2>&1; then
+    if URL="$url" node -e 'fetch(process.env.URL).then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))' >/dev/null 2>&1; then
       printf 'dev-api Swagger is reachable: %s\n' "$url"
       return 0
     fi
@@ -129,7 +137,7 @@ run_in_dev_ui() {
   mode="$1"
   schema_url="$2"
 
-  docker compose --env-file .env.development up -d dev-api dev-ui
+  docker compose --env-file .env.development up -d dev-api dev-ui dev-worker
 
   docker compose --env-file .env.development exec -T dev-ui sh -s -- \
     --wait-for-http "$schema_url" "${WAIT_FOR_HTTP_ATTEMPTS:-60}" "${WAIT_FOR_HTTP_DELAY:-1}" <"$0"
