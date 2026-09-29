@@ -31,16 +31,19 @@ online)* `/verificar-lichess` → `/checkout` → **pago, que no existe**.
 
 ## Estado del código
 
-Todo commiteado, **nada pusheado**. Hay remotos en GitHub (`caifel/peon-veloz-*`).
+Todo commiteado **y pusheado** a `origin/main` en los tres repos
+(`caifel/peon-veloz-api`, `-ui-astro`, `-ops`). Este archivo es el commit más
+reciente de `ops`; no pongas acá su propio hash, porque cada cambio lo invalida.
 
-| Repo | Últimos commits | Sin pushear |
-|---|---|---|
-| `api` | `293b35d` `8080775` `3504b2d` `a0fe5e3` | 6 |
-| `ui-astro` | `147c58f` `4c13c22` | 3 |
-| `ops` | `071f1c0` `57a9856` | 3 |
+Los cambios de esta etapa, por repo:
 
-> **Pushear es la única copia de respaldo real.** Commitear protege contra perder
-> el working tree, no contra perder la máquina.
+| Repo | Commits |
+|---|---|
+| `api` | `293b35d` modelo mínimo · `8080775` Lichess server-side · `3504b2d` resolveEntryCta · `a0fe5e3` tests |
+| `ui-astro` | `147c58f` vistas del flujo · `4c13c22` tipos regenerados |
+| `ops` | `071f1c0` README y generate-url · `…` este traspaso |
+
+Si querés saber si algo quedó sin subir: `git log --oneline @{u}..HEAD` en cada repo.
 
 ---
 
