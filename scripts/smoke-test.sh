@@ -11,9 +11,6 @@ Checks:
   1. API root endpoint (metadata)
   2. Database connectivity (/health)
   3. Swagger JSON (/swagger/json)
-  4. Authentication (login, session cookie, /auth/me)
-
-  5. Logout
 
 Exit code 0 on success, 1 on any failure.
 EOF
@@ -71,30 +68,6 @@ http_get_body() {
   curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" "$api_url$path" 2>/dev/null || true
 }
 
-http_post_json_status() {
-  local path="$1"
-  local body="$2"
-  curl -sS -o /dev/null -w "%{http_code}" \
-    -b "$COOKIE_JAR" \
-    -c "$COOKIE_JAR" \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d "$body" \
-    "$api_url$path" 2>/dev/null || true
-}
-
-http_post_json_body() {
-  local path="$1"
-  local body="$2"
-  curl -sS \
-    -b "$COOKIE_JAR" \
-    -c "$COOKIE_JAR" \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d "$body" \
-    "$api_url$path" 2>/dev/null || true
-}
-
 printf '\nSmoke-testing API at %s...\n\n' "$api_url"
 
 printf 'Waiting for API readiness'
@@ -124,29 +97,6 @@ check "GET /health" "$status" "$body"
 
 # 3. Swagger JSON
 check "GET /swagger/json" "$(http_get_status "/swagger/json")"
-
-# 4. Login
-login_body='{"email":"admin@peonveloz.com","password":"admin123"}'
-status=$(http_post_json_status "/auth/login" "$login_body")
-if [ "$status" = "200" ]; then
-  check "POST /auth/login" "$status"
-else
-  body=$(http_post_json_body "/auth/login" "$login_body")
-  check "POST /auth/login" "$status" "$body"
-fi
-
-# 5. Get current user (requires session cookie from login)
-body=$(http_get_body "/auth/me")
-status=$(http_get_status "/auth/me")
-if [ "$status" = "200" ]; then
-  user_name=$(printf '%s' "$body" | sed -n 's/.*"name":"\([^"]*\)".*/\1/p')
-  check "GET /auth/me" "$status" "user=$user_name"
-else
-  check "GET /auth/me" "$status" "$body"
-fi
-
-# 6. Logout
-check "POST /auth/logout" "$(http_post_json_status "/auth/logout" "{}")"
 
 rm -f "$COOKIE_JAR"
 

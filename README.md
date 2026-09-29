@@ -158,33 +158,118 @@ PUBLIC_API_URL=http://192.168.1.42:4000
 
 Then add that UI origin to `FRONTEND_URL` in `.env.development`, otherwise the API rejects the browser request with a CORS error. Recreate the UI container after changing it: `docker compose --env-file .env.development up -d dev-ui`.
 
-### Dev Tokens (/register)
+### Generar URLs (register, checkout, verify)
 
-`/register` needs a signed, single-use token. In production the WhatsApp dispatcher mints it when an unknown number texts an active tournament slug. For local work, mint one directly:
+Cada paso del flujo necesita su propio token firmado, y en producción los mintea el dispatcher de WhatsApp según el caso. Para trabajar local no hay que armar ninguno a mano: **`generate-url` usa la misma lógica del dispatcher y decide solo qué link corresponde.**
 
 ```sh
-make register-token PHONE=799999999 SLUG=torneo-intercolegial
+make generate-url PHONE=799999999 SLUG=torneo-intercolegial
 ```
 
-That prints a ready-to-open link:
+Imprime qué camino tomó y por qué, más el link listo para abrir:
 
 ```txt
-  phone:      799999999
-  tournament: Intercolegial La Paz 2026
+  phone:      77777777
+  tournament: Arena Online Peón Veloz
   expires:    in 30 minutes
-  single use: yes, consumed by POST /api/auth/register
 
-  http://localhost:4321/register?t=eyJhbGciOi...
+  user:       ya existe (Admin) -> verificar-lichess
+  single use: no
+
+  Torneo online sin cuenta de Lichess: va directo a vincularla,
+  y el `next` lo devuelve al checkout cuando termine.
+
+  http://localhost:4321/verificar-lichess?t=eyJhbGciOi...&next=%2Fcheckout%3Ft%3D...
 ```
 
-The token is signed with `TOKEN_SIGNING_KEY` from `.env.development` and reuses the API's own `createRegisterToken()`, so it cannot drift from the real flow. It is valid for 30 minutes and is consumed by the first successful `POST /api/auth/register` — mint a fresh one for every test, and expect `410 GONE` when you reuse one (the page redirects to `/expired`).
+Los tres caminos, iguales a los de `dispatcher.ts`:
 
-Seed slugs: `torneo-intercolegial` and `torneo-copa-paz` are active; `torneo-relampago` is not. The helper refuses a phone that is already registered (registration would return `409`) and warns about unknown or inactive slugs.
+| Teléfono + torneo | Link |
+|---|---|
+| Teléfono desconocido | `/register?t=<registerToken>` |
+| Ya existe, presencial **o** con cuenta de Lichess | `/checkout?t=<checkoutToken>` |
+| Ya existe, online y **sin** cuenta | `/verificar-lichess?t=<lichessLink>&next=<checkout>` |
 
-The same helper is available inside the API repo:
+Los tokens salen de las mismas funciones que usa el dispatcher (`createRegisterToken`, `createCheckoutToken`, `createLichessLinkToken`), firmados con `TOKEN_SIGNING_KEY`, así que no pueden divergir del flujo real. **El de registro es el único de un solo uso**: lo consume `POST /api/auth/register`, y si lo reusás da `410 GONE` (la página va a `/expired`).
+
+También avisa si el slug no existe o si el torneo está inactivo, aclarando que en ese caso el dispatcher real ignoraría el mensaje.
+
+Seed slugs: `torneo-intercolegial` y `torneo-copa-paz` son activos, `torneo-relampago` no, y `torneo-online-arena` es el único **online**.
+
+Para probar los dos caminos de un usuario que ya existe hay teléfonos en el seed: `77777777` (Admin, **sin** cuenta → manda a verificar) y `780000000` (Carlos, **con** cuenta → va directo a pagar).
+
+Para probar los dos caminos de un usuario que ya existe hay teléfonos en el seed: `77777777` (Admin, **sin** cuenta de Lichess → manda a verificar) y `780000000` (Carlos, **con** cuenta → va directo a pagar).
+
+### Modalidad y cuenta de Lichess
+
+`tournaments.isOnline` decide si hace falta cuenta de Lichess. En `users`, `lichessId` y `lichessUsername` son **opcionales y sin `unique`**: un torneo presencial no requiere Lichess, y dos personas pueden compartir la misma cuenta (padre e hijo).
+
+**El registro no acepta identidad de Lichess.** `POST /api/auth/register` solo crea la persona; no tiene campos `lichessId`/`lichessUsername`. La cuenta se vincula aparte, vía OAuth, en la vista dedicada `/verificar-lichess`. Eso es lo que impide que alguien se registre con la cuenta de otro: la identidad la escribe el servidor en el callback, no el navegador.
+
+| Paso | Dónde |
+|---|---|
+| 1. Crear la persona | `/register?t=<registerToken>` → `POST /api/auth/register` |
+| 2. Vincular Lichess (**solo online**) | `/verificar-lichess?t=<lichessLink>&next=<checkout>` |
+| 3. Inscribirse y pagar | `/checkout?t=<checkoutToken>` (el pago todavía no existe server-side) |
+
+**El registro siempre termina en el checkout**, porque inscribirse requiere pagar. Como `POST /api/auth/register` consume el token de registro, la misma respuesta emite un `checkoutToken` (de 30 minutos, no 5: el camino online pasa por el OAuth antes de llegar a pagar).
+
+- Torneo **presencial** → `lichessLink: null` → la página va directo a `/checkout?t=<checkoutToken>`.
+- Torneo **online** → `lichessLink` presente → va a `/verificar-lichess` con `next` apuntando al checkout, así después de vincular la cuenta vuelve solo a pagar.
+
+### Quién entra por dónde
+
+El **dispatcher** (el botón de WhatsApp) y la **página de registro** resuelven lo mismo con el mismo criterio, así que las dos entradas son simétricas:
+
+| Situación | A dónde manda el botón |
+|---|---|
+| Teléfono desconocido | `/register?t=<registerToken>` |
+| Ya existe, torneo presencial | `/checkout?t=<checkoutToken>` |
+| Ya existe, online **con** cuenta vinculada | `/checkout?t=<checkoutToken>` |
+| Ya existe, online **sin** cuenta | `/verificar-lichess?t=<lichessLink>&next=<checkout>` — directo a verificar, y de ahí al checkout |
+
+El botón dice lo que va a pasar: "Registro de usuario", "Realizar pago" o "Verificar cuenta" según la fila.
+
+El checkout **igual exige** la cuenta para torneos online. No es redundante: es la red de seguridad para quien entra con un link viejo o pierde el `next` en el camino.
+
+Cómo viaja la identidad en el paso 2: `GET /api/auth/lichess?rt=<token>` guarda el teléfono junto al `verifier` PKCE en Redis; el callback canjea el código, lee la cuenta de Lichess y **escribe `users.lichessId` del lado del servidor**. El navegador nunca ve ni envía la identidad. `/api/auth/lichess/status?t=<token>` informa el resultado (`pending`, `ok`, `not_clean`, `too_few_games`, `oauth_failed`, `user_not_found`) y es lo que consulta la vista mientras espera.
+
+**La vista no confirma nada:** cuando el estado es `ok` la cuenta ya está guardada (la escritura la hizo el callback), así que muestra el overlay de carga y sigue sola a `next`. No hay pantalla de "vinculamos la cuenta" ni botón de continuar: era un toque sin ninguna decisión, y el checkout igual muestra con qué cuenta quedó.
+
+Los errores se parten en dos, según si reintentar puede servir:
+
+| Resultado | Qué hace la vista |
+|---|---|
+| `oauth_failed`, `too_few_games`, `not_clean` | Pantalla de error con el motivo y la barra de acción (con el texto ajustado: "Reintentar" o "Probar con otra cuenta") |
+| `user_not_found` | Va a `/expired`, porque reintentar el OAuth falla siempre: el problema es que no existe el registro, y la salida es pedir un link nuevo |
+
+Sin `next` en la URL la vista también corta a `/expired`, y lo hace **al inicio**: no tiene sentido que el usuario complete el OAuth para que después no sepamos a dónde mandarlo.
+
+El checkout además **exige** la cuenta para torneos online, y eso cubre a los usuarios que ya existen: `GET /api/checkout/:token` devuelve `isOnline`, `hasLichess` y, si falta, un `lichessLink` nuevo para ir a verificar y volver. Es el caso de alguien que se registró para un torneo presencial y después quiere uno virtual — ese camino entra directo por el checkout, sin pasar por el registro.
+
+### Modelo de torneo
+
+`tournaments` guarda lo mínimo (9 campos): `name`, `slug`, `startTime`, `isOnline`, `onlineUrl`, `inscriptionPrice`, `pageHtml` y `isActive`. El torneo en Lichess lo arma **el organizador** por su cuenta y acá solo se guarda el link en `onlineUrl`; todo el resto del evento (sede, ritmo, variante, premios, cupo) vive en `pageHtml`, que diseña el organizador.
+
+`inscriptionPrice` es el `amount` de la inscripción (centavos, 0 = gratis).
+
+**`pageHtml` todavía NO se renderiza.** Falta decidir cómo se sanitiza: inyectar HTML del organizador en el origen propio es un vector de stored XSS (accede a cookies, sesión y a la API same-origin). Y como todavía no hay login, no hay forma de restringir quién crea torneos.
+
+Criterio de la tabla: **no se agregan columnas hasta que haya código que las lea**. Por eso se sacaron `registrationDeadline`, `maxParticipants`, `rounds`, `systemOfPlay`, `clockTime` y compañía — se usaban solo en `routes/tournaments.ts`, que está desmontado y escrito contra un esquema anterior. Cuando exista el código que las aplique, se agregan de vuelta.
+
+Para probar ambos caminos:
 
 ```sh
-bun run dev:register-token <phone> <slug>
+make generate-url PHONE=799999999 SLUG=torneo-intercolegial   # nuevo + presencial: register -> /checkout
+make generate-url PHONE=799999998 SLUG=torneo-online-arena    # nuevo + online: register -> /verificar-lichess -> /checkout
+```
+
+El paso 2 necesita una cuenta real de Lichess: es lo único del flujo que no se puede verificar con `curl`.
+
+El mismo helper está disponible dentro del repo de la API:
+
+```sh
+bun run dev:generate-url <phone> <slug>
 ```
 
 Remove a test registration with:
