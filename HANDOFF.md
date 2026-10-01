@@ -158,9 +158,10 @@ flowchart LR
 
 ## Estado del código
 
-**Sin commitear** (54 archivos entre los tres repos).
+**Todo commiteado y pusheado.** El commit `10a24db` de `api` es "el rediseño";
+`0df7f0a` de `ui-astro` es lo suyo. Lo listo abajo es qué cambió en cada repo.
 
-### `api` — 40 archivos
+### `api` — 41 archivos
 
 Reescrito en esta etapa: `db/schema.ts` (modelo nuevo), `db/seed.ts`,
 `app.ts`, `routes/auth.ts`, `routes/token.ts`, `routes/webhook-meta.ts`,
