@@ -36,6 +36,61 @@ Escrito el **2026-09-29** para retomar el trabajo en una conversación nueva.
 
 ---
 
+## El norte: el flujo que queremos
+
+**Esto no es el estado.** El estado es la tabla de más abajo. Esto es lo que
+buscamos, para no construir piezas sueltas sin saber para qué. Leelo antes de
+tocar código: si una implementación contradice algún principio de acá, está mal
+aunque compile.
+
+### La experiencia, contada de una vez
+
+Un desconocido le escribe al bot. **Sin registrarse, sin llenar nada**, recibe la
+lista de los próximos eventos con fecha, precio y modalidad. Elige uno. El bot le
+manda el marketing del evento, el flyer y el QR de pago, y le dice qué poner en la
+glosa. Transfiere desde su banco. Manda la foto del comprobante. **En segundos el
+bot le confirma que el pago está acreditado y le manda el formulario.** Llena sus
+datos una vez; si el evento es online, vincula su cuenta de Lichess. Recibe el
+mensaje de que quedó inscripto.
+
+Detrás, sin que nadie lo vea: la notificación del banco que llega al teléfono del
+organizador se cruza con el comprobante y el pago queda confirmado. **El
+organizador no toca nada**, hasta que algo no cierre — y ahí interviene.
+
+### El criterio de que funciona
+
+Hoy **ninguno** de estos se cumple:
+
+1. Un desconocido completa el flujo entero en **un solo chat**, sin que nadie del
+   club intervenga.
+2. La plata que entró queda atada a una **persona inscripta**, no a un comprobante
+   suelto.
+3. El organizador puede ver en cualquier momento **quién pagó y no se registró** —
+   esa lista es la diferencia entre `payments` y `inscriptions`, y es la razón por
+   la que el pago se crea al elegir el evento y no al final.
+4. Ante un caso dudoso, el bot **no decide solo**: lo deriva al organizador.
+
+### Principios que no se negocian
+
+- **El jugador no tipea slugs ni navega páginas.** Todo pasa en el chat. El slug es
+  interno: vive en el QR y en la glosa.
+- **El pago se crea al elegir el evento**, no al terminar el formulario: la
+  notificación del banco puede llegar en cualquier momento y necesita una punta
+  contra la cual cruzarse. Si la notificación llega primero, **el que llega segundo
+  completa el par**.
+- **Un pago = un jugador.** Un papá que anota a dos hijos necesita dos pagos, así
+  que `payments (eventId, userId)` **no** puede ser único.
+- **La evidencia no se descarta.** Todo lo que manda el teléfono se guarda, aunque
+  sea publicidad: lo descartado es lo que después no se puede auditar.
+- **Nunca prometer lo que no se puede cumplir.** Si el bot dice que va a avisar, el
+  aviso tiene que existir. Hoy no existe (ver el warning de arriba).
+- **La plata la confirma un humano hasta que la IA se gane el lugar** — y aun
+  entonces, la IA no decide sola sobre un comprobante ilegible.
+- **El comprobante es la prueba, no un asset.** Se verifica contra el sha256 que
+  manda Meta, se guarda en el volumen y no se sirve por HTTP.
+
+---
+
 ## Cómo arrancar
 
 ```sh

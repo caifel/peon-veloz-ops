@@ -164,6 +164,9 @@ El bot de WhatsApp es la única entrada: **no hay página pública de evento ni
 checkout**. El marketing vive en la conversación, y el QR de pago lo manda el
 worker al chat.
 
+Esta tabla es el **estado** de cada paso. Lo que buscamos —la experiencia completa
+y qué significa que funcione— está en *El norte* del `HANDOFF.md`.
+
 | # | Qué pasa | Estado |
 |---|---|---|
 | 1 | Primer mensaje de cualquiera → se registra el contacto y recibe la **lista de eventos** | ✅ |
