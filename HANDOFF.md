@@ -8,8 +8,10 @@ Escrito el **2026-09-29** para retomar el trabajo en una conversación nueva.
 | Cómo funciona el flujo | `README.md` |
 | Las tablas, campo por campo | `api/docs/modelo-de-datos.md` |
 
-> **Estado:** todo commiteado y pusheado. `api` `10a24db` · `ui-astro` `0df7f0a` ·
-> `ops` `52f2a33`. Suite en verde: 39 pass, 0 fail.
+> **Estado:** todo commiteado y pusheado. El estado que describe este traspaso es
+> el de `api` `10a24db` y `ui-astro` `0df7f0a`; **este archivo es el commit más
+> reciente de `ops`** (no pongas acá su hash: cada cambio lo invalida). Suite en
+> verde: 39 pass, 0 fail.
 
 > ## ⚠️ No lo pongas en manos de jugadores reales todavía
 >
