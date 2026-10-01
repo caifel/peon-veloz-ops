@@ -8,9 +8,29 @@ Escrito el **2026-09-29** para retomar el trabajo en una conversación nueva.
 | Cómo funciona el flujo | `README.md` |
 | Las tablas, campo por campo | `api/docs/modelo-de-datos.md` |
 
-> **Nada está commiteado.** Los tres repos tienen cambios sin commitear (ver
-> [Estado del código](#estado-del-código)). Si vas a empezar de cero, commiteá
-> primero.
+> **Estado:** todo commiteado y pusheado. `api` `10a24db` · `ui-astro` `0df7f0a` ·
+> `ops` `52f2a33`. Suite en verde: 39 pass, 0 fail.
+
+> ## ⚠️ No lo pongas en manos de jugadores reales todavía
+>
+> **El flujo no cierra: nadie confirma el pago.** Verificado: cuatro cosas del
+> esquema **no las escribe ningún código** —
+> `payments.status = 'confirmed'`, `payments.confirmedAt`,
+> `bank_notifications.matchedPaymentId` y la tabla `inscriptions` (solo se lee,
+> en el listado del admin). O sea: el comprobante y la notificación del banco se
+> acumulan en la base y **nadie los cruza**.
+>
+> Y lo peor no es el silencio, es que el bot **contesta**:
+>
+> > *"Recibí tu comprobante. Lo estamos verificando y **te aviso cuando esté
+> > confirmado**."*
+>
+> Ese aviso no existe en el código. Un jugador real transfiere, manda la foto,
+> lee esa frase y no vuelve a saber nada: la plata entró y no hay registro que la
+> ate a una persona. **Antes de exponer el flujo, cambiar ese texto.**
+>
+> Lo que falta para cerrarlo: **9** (confirmación), **10-11** (formulario e
+> `inscriptions`) y **14** (aviso al jugador). Ver P0.
 
 ---
 
