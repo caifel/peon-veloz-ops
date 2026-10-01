@@ -1,171 +1,158 @@
-# Docker Web Development Environment
+# Peón Veloz — el stack de desarrollo
 
-This folder defines the Docker containers for your web development workflow. Docker through this `ops` project is the only supported local development path.
+Este directorio define los contenedores de Peón Veloz. **Levantar el proyecto a
+mano no está soportado**: el camino es Docker a través de este `ops`.
 
-Your project source lives outside this folder:
-
-```txt
-../ui-astro
-../api
-```
-
-This Docker setup lives here:
+El código vive afuera de este directorio:
 
 ```txt
-../ops
+../api        la API (Elysia + Bun + SQLite + Redis)
+../ui-astro   la UI (Astro)
 ```
 
-## Containers
+| Querés… | Leé |
+|---|---|
+| El estado, los pendientes, el norte y las trampas | `HANDOFF.md` |
+| Cómo funciona el flujo y cómo levantar el stack | **este archivo** |
+| Las tablas, campo por campo | `../api/docs/modelo-de-datos.md` |
 
-The development Compose stack has four containers:
+---
 
-- `dev-ui`: runs the Astro UI (`../ui-astro`) in development mode via `astro dev`.
-- `dev-api`: runs the Elysia API with Bun, SQLite, and Redis.
-- `dev-worker`: procesa la cola de WhatsApp, y **también escribe en SQLite** (guarda el comprobante y lo cuelga del pago). Por eso monta el mismo volumen de datos que `dev-api`.
-- `redis`: shared Redis service for tokens and the WhatsApp job queue.
+## Los contenedores
 
-Production local testing lives in `docker-compose.prod.yml`:
+### Desarrollo (`docker-compose.yml`) — cuatro
 
-- `prod-api`: builds and runs the Elysia API in production mode, serving Astro static files.
-- `prod-worker`: processes the WhatsApp outgoing message queue (reuses the prod-api image).
-- `redis`: shared Redis service for the production API container and the WhatsApp job queue.
+| Contenedor | Qué hace |
+|---|---|
+| `dev-ui` | Corre la UI con `astro dev` (escucha cambios en caliente) |
+| `dev-api` | Corre la API con `bun run --watch` |
+| `dev-worker` | Procesa la cola de WhatsApp **y escribe en SQLite** (guarda el comprobante y lo cuelga del pago). Por eso monta el mismo volumen de datos que `dev-api` |
+| `redis` | Cola de trabajos y marcas de tokens |
 
-All custom images use Debian Bookworm slim bases. The API and worker images use `oven/bun:1-debian`; `dev-ui` uses `node:22-slim` so the dev server and the production Astro build run on the same Node major.
+### Producción local (`docker-compose.prod.yml`) — tres
 
-## How The Containers Connect
+| Contenedor | Qué hace |
+|---|---|
+| `prod-api` | Corre la API en modo producción y **sirve la UI ya compilada** en el mismo origen |
+| `prod-worker` | Procesa la cola de WhatsApp (reusa la imagen de `prod-api`) |
+| `redis` | Igual que en dev |
 
-`dev-ui` mounts the Astro app:
+Las imágenes propias parten de Debian Bookworm slim: la API y el worker usan
+`oven/bun:1-debian`, y la UI usa `node:22-slim` para que el dev server y el build
+de producción corran sobre el mismo major de Node.
+
+---
+
+## Cómo se conectan
+
+`dev-ui` monta la UI y `dev-api` monta la API:
 
 ```txt
 ../ui-astro -> /peonveloz/ui-astro
+../api      -> /peonveloz/api
 ```
 
-`dev-api` mounts your API project:
+`prod-api` usa `../api` como contexto de build, y compila la UI **dentro** de esa
+imagen (build multi-stage). El resultado:
 
-```txt
-../api -> /peonveloz/api
-```
+- editás el código en tu máquina y el contenedor lo ve al instante
+- podés correr los tests desde el host o adentro de `dev-api`
+- los tipos de la UI se regeneran solos desde el Swagger de la API
+- con `prod-api` tenés la app entera (API + estáticos) en un solo origen
 
-`prod-api` uses the API folder as its Docker build context from `docker-compose.prod.yml`. The Astro bundle is built as part of the API image (multi-stage build).
+### Dónde vive la configuración
 
-The result:
+| Archivo | Para qué |
+|---|---|
+| `.env.development` | La fuente de verdad del stack de dev |
+| `.env.production` | La fuente de verdad de la corrida tipo producción |
+| `.env.development.example`, `.env.production.example` | Documentan las variables |
+| `api/.env` | **No se usa**: la API lee de `ops/.env.development` |
+| `ui-astro/.env` | Opcional, solo para overrides de la UI como `PUBLIC_API_URL` |
 
-- edit code directly on your host machine
-- run API tests from the host or inside `dev-api`
-- run the integrated dev stack with `dev-ui` and `dev-api` together
-- regenerate ui-astro API types from the fresh `dev-api` Swagger schema during startup
-- build/run the production image with `prod-api` (API + Astro static files)
+---
 
-Runtime configuration lives in this folder:
+## Empezar
 
-- `.env.development` is the local source of truth for Docker dev runs.
-- `.env.production` is the local source of truth for production-like local runs.
-- `.env.development.example` and `.env.production.example` document the required variables.
-- `api/.env` is intentionally not used by the supported dev workflow; the API reads its configuration from `ops/.env.development`.
-- `ui-astro/.env` is optional and only for UI overrides such as `PUBLIC_API_URL`; see `ui-astro/.env.example`.
+> ### ⚠️ `make up` **reemplaza los datos locales**
+>
+> Corre `db:seed` **siempre**, y el seed borra y recrea contactos, jugadores y
+> eventos. Para levantar conservando lo que tenías:
+>
+> ```sh
+> docker compose --env-file .env.development up -d
+> ```
 
-## Quick Start
-
-Copy the example environment files and fill the local Docker values:
+Copiá los archivos de entorno y completá los valores locales:
 
 ```sh
 cp .env.development.example .env.development
 cp .env.production.example .env.production
 ```
 
-Clone your project repositories:
+Cloná los repos:
 
 ```sh
 cd ..
-git clone git@github.com:YOUR_USER/peonveloz-ui-astro.git ui-astro
-git clone git@github.com:YOUR_USER/peonveloz-api.git api
+git clone git@github.com:caifel/peon-veloz-ui-astro.git ui-astro
+git clone git@github.com:caifel/peon-veloz-api.git api
 ```
 
-Start the integrated app stack:
+Levantá el stack:
 
 ```sh
 make up
 ```
 
-`dev-ui` binds host port `4321`. If a host `astro dev` is still running, stop it first (`cd ../ui-astro && npx astro dev stop`), otherwise the port is already taken.
+Eso hace tres cosas, en orden:
 
-This starts/recreates:
+1. `bun install` en el api, y **si la base no existe**, le crea el esquema
+   (`db:push`). No aplica migraciones en cada arranque: la base ya creada queda
+   como está.
+2. `db:seed` — **siempre**, así que reemplaza los datos (ver el aviso de arriba).
+3. Sincroniza los tipos de la UI desde el Swagger de la API.
 
-- `dev-api`
-- `dev-ui`
-- `dev-worker`
-
-It starts the pair if needed. `dev-api` applies pending migrations before serving, then the ops sync waits for Swagger from inside the Docker network and regenerates the ui-astro API types.
-
-That Swagger/type sync is implemented in:
-
-```sh
-scripts/sync-api-types.sh
-```
-
-After changing API routes, response schemas, or Swagger-visible contracts, run:
-
-```sh
-make up
-```
-
-To refresh or check generated types without recreating the app stack:
-
-```sh
-make api-types
-make api-types-check
-```
-
-Run the API types sync directly from the host:
-
-```sh
-bash scripts/sync-api-types.sh
-bash scripts/sync-api-types.sh --check
-```
-
-Stop the integrated app stack:
-
-```sh
-make down
-```
-
-Display the development command reference:
-
-```sh
-make help
-```
-
-Open:
+Después abrí:
 
 ```txt
-http://localhost:4321
+http://localhost:4321     la UI
+http://localhost:4000     la API
+http://localhost:4000/swagger
 ```
 
-### How the UI Reaches The API
+> **El puerto 4321 tiene que estar libre.** Si tenés un `astro dev` corriendo en el
+> host, parálo primero (`cd ../ui-astro && npx astro dev stop`), si no el contenedor
+> no puede tomarlo.
 
-Browser scripts in `ui-astro/src/pages/*.astro` read `PUBLIC_API_URL` and fall back by mode:
+Para ver todos los comandos con su descripción: `make help`. Para parar el stack
+sin borrar los datos: `make down`.
 
-| Mode | Default API base | Why |
-|------|------------------|-----|
-| `astro dev` (`dev-ui`) | `http://localhost:4000` | the API port is published to the host, so the browser reaches it directly |
-| `astro build` (`prod-api`) | same origin (`/api/...`) | the API serves the built Astro files, so no CORS is involved |
+### Los tipos de la UI
 
-Override the dev default only when the browser must reach the API on a different host — a phone on your LAN, or an ngrok tunnel. Create `ui-astro/.env`:
+El contrato de la API se publica en Swagger y de ahí se **generan** los tipos de
+`ui-astro/src/api/generated/schema.ts`. El script es
+`scripts/sync-api-types.sh`, y lee el schema desde adentro de la red de Docker
+(`http://dev-api:4000/swagger/json`).
 
-```sh
-PUBLIC_API_URL=http://192.168.1.42:4000
-```
+| Comando | Qué hace |
+|---|---|
+| `make api-types` | Regenera los tipos |
+| `make api-types-check` | Falla si quedaron desactualizados |
 
-Then add that UI origin to `FRONTEND_URL` in `.env.development`, otherwise the API rejects the browser request with a CORS error. Recreate the UI container after changing it: `docker compose --env-file .env.development up -d dev-ui`.
+Cada vez que cambiás una ruta o un esquema de respuesta, corré `make up` (o
+`make api-types`) y commiteá el archivo generado. **`api-types-check` no es un
+typecheck**: solo verifica que los tipos generados estén al día.
 
-### El flujo, de punta a punta
+---
+
+## El flujo del producto
 
 El bot de WhatsApp es la única entrada: **no hay página pública de evento ni
 checkout**. El marketing vive en la conversación, y el QR de pago lo manda el
 worker al chat.
 
-Esta tabla es el **estado** de cada paso. Lo que buscamos —la experiencia completa
-y qué significa que funcione— está en *El norte* del `HANDOFF.md`.
+Esta tabla es el **estado** de cada paso. La experiencia que buscamos y qué
+significa que funcione están en *El norte* de `HANDOFF.md`.
 
 | # | Qué pasa | Estado |
 |---|---|---|
@@ -176,18 +163,24 @@ y qué significa que funcione— está en *El norte* del `HANDOFF.md`.
 | 5 | **Confirmación**: comprobante + notificación → pago `confirmed` + formulario | ❌ *(la hace el admin a mano primero, ver P0 del HANDOFF)* |
 | 6 | El jugador completa el formulario → `players` + `inscriptions` | ❌ |
 
+> ⚠️ **El flujo no cierra todavía.** Nadie confirma el pago, y el bot contesta que
+> va a avisar cuando esté confirmado — ese aviso no existe. No lo pongas en manos
+> de jugadores reales. Detalle en `HANDOFF.md`.
+
 Cada paso, con el archivo que lo implementa, está en `HANDOFF.md`.
 
-**Ya no existe la regla de "la última palabra del mensaje = slug".** Ahora el
-usuario elige de una lista desplegable y vuelve el `id` de la fila
-(`evt-<id>`); cualquier otro texto recibe la lista de nuevo. Lo resuelve
-`lib/whatsapp/dispatcher.ts`.
+### La entrada
+
+**Ya no existe la regla de "la última palabra del mensaje = slug".** El usuario
+elige de una lista desplegable y vuelve el `id` de la fila (`evt-<id>`); cualquier
+otro texto recibe la lista de nuevo. Los límites de WhatsApp mandan: máximo 10
+filas, título de 24 caracteres. Lo resuelve `lib/whatsapp/dispatcher.ts`.
 
 ### Alta de eventos (el admin)
 
-El organizador escribe **`crear-evento`** en el chat y el bot le manda un link
-con token (60 minutos) a `/new-event`. Ahí llena el formulario y el evento
-aparece en la lista de los jugadores.
+El organizador escribe **`crear-evento`** en el chat, el bot le manda un link con
+token (60 minutos) a `/new-event`, y ahí llena el formulario. El evento aparece en
+la lista de los jugadores.
 
 | Endpoint | Qué hace |
 |---|---|
@@ -203,13 +196,56 @@ Detalles que importan:
   usado da `410`.
 - La fecha se carga como **hora de Bolivia** (`America/La_Paz`, sin horario de
   verano) y se guarda en UTC. Sin eso, un evento de las 22:00 empezaría a las 18:00.
-- El **slug** es lo que el pagador escribe en la glosa de la transferencia, así
-  que conviene que sea corto. El formulario lo propone desde el nombre.
+- El **slug** es lo que el pagador escribe en la glosa de la transferencia, así que
+  conviene que sea corto. El formulario lo propone desde el nombre.
+
+### Modelo de evento
+
+`events` guarda lo mínimo: `name`, `slug`, `startTime`, `isOnline`, `onlineUrl`,
+`inscriptionPrice`, `marketingText`, `flyerUrl`, `paymentQrUrl` e `isActive`.
+
+- El evento en Lichess lo arma **el organizador** por su cuenta; acá solo se guarda
+  el link en `onlineUrl`.
+- **`marketingText`** es el texto que el bot manda al chat; el **`flyerUrl`** y el
+  **`paymentQrUrl`** son imágenes que el worker **descarga y sube a Meta**, así que
+  las URLs no necesitan ser públicas (Meta nunca las visita).
+- `inscriptionPrice` está en centavos (0 = gratis) y es el monto que se **congela en
+  cada pago**: si el organizador cambia el precio después, lo ya acordado no se mueve.
+
+> La vieja columna `pageHtml` **se eliminó**: ya no hay una página por evento.
+
+Criterio de la tabla: **no se agregan columnas hasta que haya código que las lea.**
+El detalle campo por campo está en `../api/docs/modelo-de-datos.md`.
+
+### Lichess
+
+`events.isOnline` decide si hace falta cuenta de Lichess. La cuenta vive en
+**`players`** (`lichessId`, `lichessUsername`), es opcional y **sin `unique`**: un
+evento presencial no la requiere, y dos personas pueden compartir la misma cuenta
+(padre e hijo).
+
+**El registro no acepta identidad de Lichess.** La escribe el servidor en el
+callback del OAuth, nunca el navegador — eso es lo que impide que alguien se
+registre con la cuenta de otro.
+
+`GET /api/auth/lichess?rt=<token>` guarda el teléfono junto al `verifier` PKCE en
+Redis; el callback canjea el código, lee la cuenta y la escribe del lado del
+servidor. `/api/auth/lichess/status?t=<token>` informa el resultado (`pending`,
+`ok`, `not_clean`, `too_few_games`, `oauth_failed`, `user_not_found`) y es lo que
+consulta `/verificar-lichess` mientras espera.
+
+**La vista no confirma nada:** cuando el estado es `ok` la cuenta ya está guardada,
+así que muestra el overlay y sigue sola al `next`. Los errores se parten en dos: los
+reintentables (pantalla de error) y `user_not_found` (va a `/expired`, porque
+reintentar el OAuth falla siempre).
+
+> `MIN_RATED_GAMES = 100` en `api/src/lib/lichess-oauth.ts:18` bloquea cuentas
+> nuevas de Lichess: bajalo temporalmente para poder probar el OAuth feliz.
 
 ### Probar sin WhatsApp
 
-Para no disparar mensajes reales, parar el worker primero (ver la trampa 1 de
-`HANDOFF.md`):
+⚠️ **El worker manda WhatsApp de verdad.** Si está arriba y posteás al webhook,
+salen mensajes reales. Para inspeccionar sin enviar, parálo primero:
 
 ```sh
 docker compose --env-file .env.development stop dev-worker
@@ -225,7 +261,7 @@ docker compose --env-file .env.development exec -T redis \
 docker compose --env-file .env.development start dev-worker
 ```
 
-Y para probar el formulario de alta sin esperar el mensaje del bot:
+Y para abrir el formulario de alta sin esperar el mensaje del bot:
 
 ```sh
 docker compose --env-file .env.development exec -T dev-api bun -e \
@@ -233,266 +269,243 @@ docker compose --env-file .env.development exec -T dev-api bun -e \
 # abrí http://localhost:4321/new-event?t=<lo que imprimió>
 ```
 
-Teléfonos y slugs del seed: ver el final de `HANDOFF.md`.
+Para correr un worker de un solo uso con otro `WHATSAPP_API_URL` (por ejemplo
+contra un servidor de prueba), **no uses `exec` en un contenedor parado**: usá
+`docker compose run --rm -T -e VAR=… dev-worker sh -c "…"`.
 
-### Lichess
+Los contactos de prueba se acumulan (cada número nuevo crea un `users`). Se borran
+con su jugador y sus pagos, que caen en cascada:
 
-`events.isOnline` decide si hace falta cuenta de Lichess. La cuenta vive en
-**`players`** (`lichessId`, `lichessUsername`), es opcional y **sin `unique`**:
-un evento presencial no la requiere, y dos personas pueden compartir la misma
-cuenta (padre e hijo).
-
-**El registro no acepta identidad de Lichess.** La escribe el servidor en el
-callback del OAuth, nunca el navegador — eso es lo que impide que alguien se
-registre con la cuenta de otro.
-
-`GET /api/auth/lichess?rt=<token>` guarda el teléfono junto al `verifier` PKCE en
-Redis; el callback canjea el código, lee la cuenta y la escribe del lado del
-servidor. `/api/auth/lichess/status?t=<token>` informa el resultado (`pending`,
-`ok`, `not_clean`, `too_few_games`, `oauth_failed`, `user_not_found`) y es lo que
-consulta `/verificar-lichess` mientras espera.
-
-**La vista no confirma nada:** cuando el estado es `ok` la cuenta ya está
-guardada, así que muestra el overlay y sigue sola al `next`. Los errores se
-parten en dos: los reintentables (pantalla de error) y `user_not_found` (va a
-`/expired`, porque reintentar el OAuth falla siempre).
-
-> `MIN_RATED_GAMES = 100` en `api/src/lib/lichess-oauth.ts:18` bloquea cuentas
-> nuevas de Lichess: bajalo temporalmente para poder probar el OAuth feliz.
-
-### Modelo de evento
-
-`events` guarda lo mínimo: `name`, `slug`, `startTime`, `isOnline`, `onlineUrl`,
-`inscriptionPrice`, `marketingText`, `flyerUrl`, `paymentQrUrl` e `isActive`.
-
-- El evento en Lichess lo arma **el organizador** por su cuenta; acá solo se
-  guarda el link en `onlineUrl`.
-- **`marketingText`** es el texto que el bot manda al chat; el **`flyerUrl`** y el
-  **`paymentQrUrl`** son imágenes que el worker **descarga y sube a Meta**, así
-  que las URLs no necesitan ser públicas (Meta nunca las visita).
-- `inscriptionPrice` está en centavos (0 = gratis) y es el monto que se **congela
-  en cada pago**: si el organizador cambia el precio después, lo ya acordado no
-  se mueve.
-
-> La vieja columna `pageHtml` **se eliminó**: ya no hay una página por evento.
-
-Criterio de la tabla: **no se agregan columnas hasta que haya código que las
-lea.** El detalle campo por campo está en `api/docs/modelo-de-datos.md`.
-
-## Backend API
-
-`dev-api` expects an Elysia/Bun API at:
-
-```txt
-../api
+```sh
+docker compose --env-file .env.development exec -T dev-api \
+  sqlite3 /peonveloz/api/data/app.db "DELETE FROM users WHERE phone='799123456';"
 ```
 
-Inside the container, SQLite lives at:
+Teléfonos y eventos del seed: al final de `HANDOFF.md`.
+
+---
+
+## Cómo la UI llega a la API
+
+Los scripts del navegador en `ui-astro/src/pages/*.astro` leen `PUBLIC_API_URL` y
+si no está, eligen según el modo:
+
+| Modo | Base de la API | Por qué |
+|---|---|---|
+| `astro dev` (`dev-ui`) | `http://localhost:4000` | El puerto de la API está publicado en el host, así que el navegador la alcanza directo |
+| `astro build` (`prod-api`) | El mismo origen (`/api/...`) | La API sirve los estáticos, así que no hay CORS |
+
+Overrideá el default de dev solo si el navegador tiene que llegar a la API en otro
+host — un teléfono en tu red, o un túnel de ngrok. Creá `ui-astro/.env`:
+
+```sh
+PUBLIC_API_URL=http://192.168.1.42:4000
+```
+
+Y agregá ese origen de la UI a `FRONTEND_URL` en `.env.development`, si no la API
+rechaza el pedido con un error de CORS. Después recreá el contenedor de la UI:
+`docker compose --env-file .env.development up -d dev-ui`.
+
+---
+
+## El backend
+
+### SQLite
+
+Adentro del contenedor la base vive en:
 
 ```txt
 /peonveloz/api/data/app.db
 ```
 
-The app receives one SQLite source of truth:
+Y la API recibe una sola fuente de verdad:
 
 ```txt
 SQLITE_PATH=/peonveloz/api/data/app.db
 ```
 
-Drizzle derives `DATABASE_URL=file:${SQLITE_PATH}` internally.
+Drizzle deriva `DATABASE_URL=file:${SQLITE_PATH}` por su cuenta.
+
+**El api y el worker abren el mismo archivo**, así que los dos necesitan
+`SQLITE_PATH` con el mismo valor y el volumen de datos montado (ver *Variables de
+entorno* y la trampa 4 de `HANDOFF.md`). La base corre en modo WAL, que permite
+leer mientras otro proceso escribe.
 
 ### Redis
 
-Redis runs as a separate Compose service using the official `redis:7-alpine` image. Hoy se usa para tres cosas:
+Redis es un servicio aparte, con la imagen oficial `redis:7-alpine`. Hoy se usa
+para tres cosas:
 
 - la **cola de trabajos** del worker (`whatsapp:queue`, `whatsapp:dead`);
-- las **marcas de tokens de un solo uso** (`used_token:<hash>`), que es lo que hace que un link de registro o de alta no se pueda reusar;
+- las **marcas de tokens de un solo uso** (`used_token:<hash>`), que es lo que hace
+  que un link de registro o de alta no se pueda reusar;
 - el **`verifier` PKCE** del OAuth de Lichess, mientras dura el handshake.
 
-| Config | Default | Purpose |
-|--------|---------|---------|
-| `REDIS_URL` | `redis://redis:6379` | Redis connection string inside Compose |
-| `REDIS_PORT` | `6379` | Host port for the Redis service |
+| Variable | Default | Para qué |
+|---|---|---|
+| `REDIS_URL` | `redis://redis:6379` | Conexión desde adentro de Compose |
+| `REDIS_PORT` | `6379` | Puerto en el host |
 
-Inspect Redis from the host:
+Para mirarlo desde el host: `redis-cli -h localhost -p 6379 ping`.
 
-```sh
-redis-cli -h localhost -p 6379 ping
-```
+Está configurado con `--save 900 1` (snapshot cada 15 minutos si cambió al menos
+una clave), así que los jobs encolados sobreviven a un restart. Los datos de tokens
+son efímeros a propósito: expiran solos por TTL.
 
-Redis is configured with `--save 900 1` (RDB snapshot every 15 minutes if at least one key changed), so queued jobs survive a Redis restart. Los datos de tokens son efímeros a propósito: expiran solos por TTL.
+> **Un crash de Redis puede perder hasta 15 minutos.** Hoy eso significa mensajes
+> sin mandar y marcas de un solo uso que se pierden (un link volvería a servir).
+> **Los pagos y los comprobantes no corren ese riesgo: viven en SQLite.** Si algún
+> día algo con plata pasa a vivir solo en Redis, cambiá `appendonly` a `yes`.
 
-> **Un crash de Redis puede perder hasta 15 minutos.** Hoy eso significa mensajes sin mandar y marcas de un solo uso que se pierden (un link volvería a servir). **Los pagos y los comprobantes no corren ese riesgo: viven en SQLite.** Si algún día algo con plata pasa a vivir solo en Redis, cambiá `appendonly` a `yes`.
+Corre con `restart: unless-stopped`, y Compose le define un healthcheck con
+`redis-cli ping`: el stack de dev lo chequea una vez por minuto, el de producción
+cada 10 segundos. `dev-api` y `prod-api` esperan a que esté sano para arrancar.
 
-Redis uses `restart: unless-stopped` so Docker restarts it after an unexpected exit. Compose also defines a Redis healthcheck using `redis-cli ping`; the development stack checks once per minute, and the production-like stack checks every 10 seconds. `dev-api` and `prod-api` wait for Redis to become healthy before starting.
+Cuando Redis no está, la API **no se cae**: la cola de WhatsApp loguea y pierde el
+job (fail-open), y las marcas de un solo uso no se pueden escribir, así que
+`markTokenAsUsed` devuelve `false` y el alta de eventos rechaza la creación — es
+preferible a dejar reusar un link. Redis se recupera solo cuando vuelve.
 
-Cuando Redis no está, la API **no se cae**: la cola de WhatsApp loguea y pierde el job (fail-open), y las marcas de un solo uso no se pueden escribir, así que `markTokenAsUsed` devuelve `false` y el alta de eventos rechaza la creación — es preferible a dejar reusar un link. Redis se recupera solo cuando vuelve.
-
-The API `/health` endpoint reports dependency status:
+`/health` informa el estado de las dependencias:
 
 ```json
-{
-  "status": "ok",
-  "dependencies": {
-    "sqlite": "ok",
-    "redis": "ok"
-  }
-}
+{ "status": "ok", "dependencies": { "sqlite": "ok", "redis": "ok" } }
 ```
 
-If Redis is down but SQLite is available, `/health` returns `200` with `status: "degraded"`. If SQLite is down, `/health` returns `503` with `status: "unhealthy"`.
+Si Redis está caído pero SQLite anda, devuelve `200` con `status: "degraded"`. Si
+SQLite está caído, devuelve `503` con `status: "unhealthy"`.
 
-### WhatsApp Worker
+### El worker de WhatsApp
 
-The worker processes outgoing WhatsApp messages from a Redis-backed job queue. It runs alongside the API but is an independent process — if it crashes, the API keeps serving and queued jobs are preserved in Redis.
+Procesa los mensajes de una cola en Redis. Corre al lado de la API pero es un
+proceso independiente: si se cae, la API sigue sirviendo y los jobs quedan en Redis.
+En dev arranca con `make up` y mira los cambios (`bun --watch`); en producción
+Docker lo reinicia (`restart: unless-stopped`).
 
-In development, the worker starts automatically with `make up` and watches for code changes (`bun --watch`). In production, Docker restarts it automatically (`restart: unless-stopped`).
-
-**Queue keys in Redis** (`redis-cli`):
+**Claves de la cola:**
 
 ```sh
-redis-cli lrange whatsapp:queue 0 -1    # pending jobs
-redis-cli lrange whatsapp:dead 0 -1     # failed after 3 retries
+redis-cli lrange whatsapp:queue 0 -1    # jobs pendientes
+redis-cli lrange whatsapp:dead 0 -1     # muertos después de 3 intentos
 ```
 
-**Worker logs**:
+**Logs:** `make worker-logs` (solo el worker) o `make logs` (todo).
+
+Cada job tiene hasta **3 intentos**. Un job lleva una **lista de mensajes en orden**
+(`messages: OutgoingMessage[]`) y el worker manda uno por uno; si el tercero falla,
+el reintento arranca **desde el que falló**, no desde el principio: nadie recibe el
+flyer dos veces. Después de 3 fallas el job va a `whatsapp:dead` para mirarlo a mano.
+
+Un job también puede llevar un **comprobante entrante** (`receipt`). En ese caso lo
+primero que hace el worker es bajarlo de Meta, verificar el sha256 y guardarlo: si
+eso falla, el job vuelve a la cola y los mensajes **no salen**, porque no se le puede
+contestar "recibí tu comprobante" a algo que no tenemos.
+
+**Para agregar una respuesta nueva** alcanza con un archivo: el dispatcher arma el
+array de mensajes y llama a `enqueueJob(from, trigger, messages)`. **No hay un mapa
+de handlers**: el worker solo manda lo que dice el job. Para un tipo de mensaje nuevo
+(por ejemplo una encuesta) hay que agregar la variante a `OutgoingMessage` en
+`queue.ts` y su rama en `sendMessage` (`whatsapp-worker.ts`).
+
+---
+
+## Variables de entorno
+
+Toda la configuración de la API entra por los bloques `environment` de los compose,
+que leen de `ops/.env.development` (o `.env.production`).
+
+**«Obligatoria» quiere decir que el compose no arranca sin ella** (`${VAR:?}`).
+Las que no lo son, pueden quedar vacías.
+
+| Variable | ¿Obligatoria? | Para qué |
+|---|---|---|
+| `SQLITE_PATH` | sí | La ruta de la base. **El api y el worker, con el mismo valor** |
+| `FRONTEND_URL` | sí | Orígenes permitidos por CORS (separados por coma) |
+| `CSRF_SECRET` | sí | Se exige en `lib/config.ts`, pero **el CSRF se eliminó**: hoy no firma nada |
+| `TOKEN_SIGNING_KEY` | sí | HMAC-SHA256 de los tokens (registro, alta de evento, link de Lichess) |
+| `REDIS_URL` | sí | Redis para la cola y las marcas de tokens |
+| `LICHESS_CLIENT_ID` | sí | OAuth de Lichess |
+| `PUSH_NOTIFICATION_API_KEY` | sí | La clave del `X-API-Key` que manda la app Android (`bridger`) |
+| `PUBLIC_URL` | en dev tiene default | URL pública base para los links que salen por WhatsApp |
+| `NODE_ENV`, `HOST`, `PORT` | las fija el compose | — |
+| `RECEIPTS_DIR` | no | Dónde viven los comprobantes. Default `data/receipts`, relativo al cwd (cae dentro del volumen) |
+| `WHATSAPP_VERIFY_TOKEN` | no | Verificación del handshake del webhook |
+| `WHATSAPP_APP_SECRET` | no | HMAC-SHA256 para validar la firma del webhook (**hoy es opcional**, ver P1 del HANDOFF) |
+| `WHATSAPP_ACCESS_TOKEN` | no | Token de Meta para mandar mensajes |
+| `WHATSAPP_PHONE_NUMBER_ID` | no | El ID del número en el panel de Meta |
+| `WHATSAPP_PUBLIC_PHONE` | no | El número del bot como aparece en un link `wa.me` (no es el ID de Meta) |
+| `WHATSAPP_API_URL` | no | Base de la Graph API. Default `https://graph.facebook.com/v22.0` |
+
+Sin las `WHATSAPP_*` la API arranca igual, pero el bot no manda nada.
+
+`SQLITE_PATH` y el volumen de datos son **lo que hace que el api y el worker vean la
+misma base**. Si agregás un import que toque SQLite en un proceso nuevo, acordate de
+las dos cosas.
+
+---
+
+## Los comandos
+
+`make help` los lista todos con su descripción. Los que más se usan:
+
+| Comando | Qué hace |
+|---|---|
+| `make up` | Levanta el stack (⚠️ **reemplaza los datos**) |
+| `make down` | Para los contenedores, conserva los volúmenes |
+| `make logs` / `make logs-api` / `make worker-logs` | Logs |
+| `make status` | Estado de los contenedores |
+| `make api-test` | La suite completa, adentro de `dev-api` |
+| `make api-types` / `make api-types-check` | Genera / verifica los tipos de la UI |
+| `make db-seed` | Siembra los fixtures (reemplaza datos) |
+| `make db-migrate` | Aplica las migraciones |
+| `make db-reset` | Borra la base, migra y siembra |
+| `make db-rebuild` | Recrea la migración desde `schema.ts`, borra la base, migra y siembra |
+| `make db-migration-refresh` | Solo recrea la migración desde `schema.ts` |
+| `make shell-api` | Una shell en `dev-api` |
+| `make sqlite-api` | Abre la base con `sqlite3` |
+| `make smoke-test` | Levanta `dev-api` si hace falta y chequea `/health` |
+| `make verify` | `db-rebuild` + tipos + `smoke-test`. **No corre los tests** |
+| `make clean` | Para todo y **borra los volúmenes** (perdés los datos) |
+| `make prod` | Compila y corre producción local |
+| `make reload-env` | Recrea `dev-api` y `dev-worker` para tomar cambios del `.env` |
+
+---
+
+## Producción
+
+`prod-api` toma `../api` como contexto. El Dockerfile en
+`ops/docker/prod-api/Dockerfile` es multi-stage: primero compila la UI desde
+`../ui-astro`, y después copia el bundle estático adentro del servidor Elysia. La
+API sirve los endpoints y los estáticos **en un solo puerto**, así que no hace falta
+un contenedor aparte para el frontend ni hay CORS de por medio.
 
 ```sh
-make worker-logs                         # dedicated worker logs
-make logs                                # all services including worker
+make prod          # build + prod-api + prod-worker
+make prod-api      # solo la API
 ```
-
-Each outgoing message gets up to 3 retry attempts on failure. After 3 failures, the job moves to `whatsapp:dead` for manual inspection. Common failure reasons: invalid access token, Meta API downtime, rate limiting.
-
-Un job lleva una **lista de mensajes en orden** (`messages: OutgoingMessage[]`), y el worker manda uno por uno. Si el tercero falla, el reintento arranca **desde el que falló**, no desde el principio: nadie recibe el flyer dos veces.
-
-Un job también puede llevar un **comprobante entrante** (`receipt`). En ese caso el worker lo primero que hace es bajarlo de Meta, verificar el sha256 y guardarlo: si eso falla, el job vuelve a la cola y los mensajes **no salen**, porque no se le puede contestar "recibí tu comprobante" a algo que no tenemos.
-
-**Para agregar una respuesta nueva** alcanza con un archivo: el dispatcher arma el array de mensajes y llama a `enqueueJob(from, trigger, messages)`. **No hay un mapa de handlers**: el worker solo manda lo que dice el job. Para un tipo de mensaje nuevo (por ejemplo una encuesta) hay que agregar la variante a `OutgoingMessage` en `queue.ts` y su rama en `sendMessage` (`whatsapp-worker.ts`).
-
-### Environment Variables
-
-All API runtime configuration is passed through the Docker Compose environment blocks from `ops/.env`.
-
-| Variable | Required | Default | Purpose |
-|----------|----------|---------|---------|
-| `SQLITE_PATH` | Yes | — | Ruta de la base. **La necesitan el api y el worker**, con el mismo valor |
-| `CSRF_SECRET` | Yes | — | Se exige en `lib/config.ts`, pero **el CSRF se eliminó**: hoy no firma nada |
-| `TOKEN_SIGNING_KEY` | Yes | — | HMAC-SHA256 de los tokens (registro, alta de evento, link de Lichess) |
-| `REDIS_URL` | No | `redis://redis:6379` | Redis para la cola y las marcas de tokens |
-| `LICHESS_CLIENT_ID` | Yes | — | Lichess OAuth client ID for chess tournament integration |
-| `PUSH_NOTIFICATION_API_KEY` | Yes | — | Clave del `X-API-Key` que manda la app Android (`bridger`) |
-| `FRONTEND_URL` | Yes | — | Allowed CORS origin (comma-separated) |
-| `PUBLIC_URL` | Yes | — | Public base URL for links sent via WhatsApp, emails, etc. |
-| `NODE_ENV` | No | `development` | `development` \| `test` \| `production` |
-| `RECEIPTS_DIR` | No | `data/receipts` | Dónde viven los comprobantes. Relativo al cwd; cae dentro del volumen de datos |
-| `WHATSAPP_VERIFY_TOKEN` | No | — | WhatsApp webhook handshake verification token |
-| `WHATSAPP_APP_SECRET` | No | — | HMAC-SHA256 secret for webhook signature validation |
-| `WHATSAPP_ACCESS_TOKEN` | No | — | Meta WhatsApp Cloud API access token for sending messages |
-| `WHATSAPP_PHONE_NUMBER_ID` | No | — | WhatsApp Business phone number ID from Meta dashboard |
-| `WHATSAPP_PUBLIC_PHONE` | No | — | El número del bot como aparece en un link `wa.me` (no es el ID de Meta) |
-| `WHATSAPP_API_URL` | No | `https://graph.facebook.com/v22.0` | Meta Graph API base URL |
-
-`SQLITE_PATH` y el volumen de datos son **lo que hace que el api y el worker vean
-la misma base**. Si agregás un import que toque SQLite en un proceso nuevo,
-acordate de las dos cosas (ver la trampa 4 de `HANDOFF.md`).
-
-In development, `LICHESS_CLIENT_ID` defaults to empty (Lichess integration is skipped but the API does not crash). In production (`docker-compose.prod.yml`), it uses `${LICHESS_CLIENT_ID:?}` and fails fast when the client ID is not set.
-
-In development, `PUSH_NOTIFICATION_API_KEY` defaults to empty (push notifications are not sent but the API does not crash). In production (`docker-compose.prod.yml`), it uses `${PUSH_NOTIFICATION_API_KEY:?}` and fails fast when the key is not set.
-
-Run the integrated app stack:
-
-```sh
-make up
-```
-
-Open:
-
-```txt
-http://localhost:4000
-```
-
-Open a shell in the API container:
-
-```sh
-make shell-api
-```
-
-Open the SQLite database:
-
-```sh
-make sqlite-api
-```
-
-Apply migrations:
-
-```sh
-make db-migrate
-```
-
-Seed development fixture data:
-
-```sh
-make db-seed
-```
-
-Reset the dev SQLite database, then migrate and seed it:
-
-```sh
-make db-reset
-```
-
-## Production
-
-`prod-api` expects your API repo (including the Astro build) at:
-
-```txt
-../api
-```
-
-The Dockerfile in `ops/docker/prod-api/Dockerfile` uses a multi-stage build: first build the Astro app from `../ui-astro`, then copy the static bundle into the Elysia server. Elysia serves both the API endpoints and the Astro static files on a single port.
-
-Run production:
-
-```sh
-make prod
-```
-
-Or directly:
-
-```sh
-docker compose -f docker-compose.prod.yml up --build prod-api
-```
-
-Open:
 
 ```txt
 http://localhost:8081
 ```
 
-The API serves everything from a single origin — no separate frontend container needed.
+---
 
-## Notes
+## Notas
 
-Development SQLite data is stored in the `dev-api-sqlite-data` Docker volume — **the api and the worker both mount it**, because the worker writes payments too. Production API SQLite data is stored in the `prod-api-sqlite-data` Docker volume (also shared with `prod-worker`). If you run `docker compose down -v`, both local API databases are deleted.
+**Los datos viven en volúmenes con nombre.** El de dev es `dev-api-sqlite-data` y
+el de producción `prod-api-sqlite-data`; **en los dos casos lo comparten el api y el
+worker**, porque el worker también escribe. `docker compose down -v` los borra.
 
-Los **comprobantes** (`data/receipts/`) viven dentro de ese mismo volumen, con el sha256 como nombre de archivo. No se sirven por HTTP: son la prueba de un pago, no un asset público.
+**Los comprobantes** (`data/receipts/`) viven dentro de ese mismo volumen, con el
+sha256 como nombre de archivo. No se sirven por HTTP: son la prueba de un pago, no
+un asset público.
 
-> ⚠️ **`make up` corre `db:seed` siempre, y el seed borra y recrea los datos.**
-> Si querés levantar conservando lo que tenías:
-> `docker compose --env-file .env.development up -d`.
-
-If you previously ran the old Vue `dev-ui`, its volumes are no longer used. Remove them once:
+Si antes corrías la `dev-ui` vieja (la de Vue), sus volúmenes ya no se usan. Borralos
+una vez:
 
 ```sh
 docker volume rm peonveloz_dev-ui-node-modules peonveloz_dev-ui-bun-cache
 ```
 
-If Docker Desktop cannot mount your project folders, add those paths to Docker Desktop file sharing settings, or change `UI_PATH` or `API_PATH` in `.env.development`.
-
-To reset all Docker volumes:
-
-```sh
-docker compose down -v
-```
+Si Docker Desktop no puede montar tus carpetas, agregá esos caminos en la
+configuración de file sharing, o cambiá `UI_PATH` o `API_PATH` en `.env.development`.
