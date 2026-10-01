@@ -20,9 +20,9 @@ This Docker setup lives here:
 The development Compose stack has four containers:
 
 - `dev-ui`: runs the Astro UI (`../ui-astro`) in development mode via `astro dev`.
-- `dev-api`: runs the Elysia API with Bun, SQLite, and Redis (rate limiting).
-- `dev-worker`: processes the WhatsApp outgoing message queue from Redis.
-- `redis`: shared Redis service for API rate limiting, tokens, local test runs, and the WhatsApp job queue.
+- `dev-api`: runs the Elysia API with Bun, SQLite, and Redis.
+- `dev-worker`: procesa la cola de WhatsApp, y **también escribe en SQLite** (guarda el comprobante y lo cuelga del pago). Por eso monta el mismo volumen de datos que `dev-api`.
+- `redis`: shared Redis service for tokens and the WhatsApp job queue.
 
 Production local testing lives in `docker-compose.prod.yml`:
 
@@ -158,143 +158,123 @@ PUBLIC_API_URL=http://192.168.1.42:4000
 
 Then add that UI origin to `FRONTEND_URL` in `.env.development`, otherwise the API rejects the browser request with a CORS error. Recreate the UI container after changing it: `docker compose --env-file .env.development up -d dev-ui`.
 
-### Generar URLs (register, checkout, verify)
+### El flujo, de punta a punta
 
-Cada paso del flujo necesita su propio token firmado, y en producción los mintea el dispatcher de WhatsApp según el caso. Para trabajar local no hay que armar ninguno a mano: **`generate-url` usa la misma lógica del dispatcher y decide solo qué link corresponde.**
+El bot de WhatsApp es la única entrada: **no hay página pública de evento ni
+checkout**. El marketing vive en la conversación, y el QR de pago lo manda el
+worker al chat.
 
-```sh
-make generate-url PHONE=799999999 SLUG=torneo-intercolegial
-```
+| # | Qué pasa | Estado |
+|---|---|---|
+| 1 | Primer mensaje de cualquiera → se registra el contacto y recibe la **lista de eventos** | ✅ |
+| 2 | Elige un evento → se crea el pago (`pending`, con el precio congelado) y recibe el **QR** | ✅ |
+| 3 | Manda el **comprobante** (imagen) → el worker lo baja, verifica el sha256 y lo guarda | ✅ |
+| 4 | Llega la **notificación del banco** (app Android) | ✅ |
+| 5 | **Cuadre**: comprobante + notificación → pago `confirmed` + formulario | ❌ |
+| 6 | El jugador completa el formulario → `players` + `inscriptions` | ❌ |
 
-Imprime qué camino tomó y por qué, más el link listo para abrir:
+Cada paso, con el archivo que lo implementa, está en `HANDOFF.md`.
 
-```txt
-  phone:      77777777
-  tournament: Arena Online Peón Veloz
-  expires:    in 30 minutes
+**Ya no existe la regla de "la última palabra del mensaje = slug".** Ahora el
+usuario elige de una lista desplegable y vuelve el `id` de la fila
+(`evt-<id>`); cualquier otro texto recibe la lista de nuevo. Lo resuelve
+`lib/whatsapp/dispatcher.ts`.
 
-  user:       ya existe (Admin) -> verificar-lichess
-  single use: no
+### Alta de eventos (el admin)
 
-  Torneo online sin cuenta de Lichess: va directo a vincularla,
-  y el `next` lo devuelve al checkout cuando termine.
+El organizador escribe **`crear-evento`** en el chat y el bot le manda un link
+con token (60 minutos) a `/new-event`. Ahí llena el formulario y el evento
+aparece en la lista de los jugadores.
 
-  http://localhost:4321/verificar-lichess?t=eyJhbGciOi...&next=%2Fcheckout%3Ft%3D...
-```
-
-Los tres caminos, iguales a los de `dispatcher.ts`:
-
-| Teléfono + torneo | Link |
+| Endpoint | Qué hace |
 |---|---|
-| Teléfono desconocido | `/register?t=<registerToken>` |
-| Ya existe, presencial **o** con cuenta de Lichess | `/checkout?t=<checkoutToken>` |
-| Ya existe, online y **sin** cuenta | `/verificar-lichess?t=<lichessLink>&next=<checkout>` |
+| `GET /api/new-event/:token` | Valida el link y devuelve a nombre de quién se crea |
+| `POST /api/new-event` | Crea el evento |
 
-Los tokens salen de las mismas funciones que usa el dispatcher (`createRegisterToken`, `createCheckoutToken`, `createLichessLinkToken`), firmados con `TOKEN_SIGNING_KEY`, así que no pueden divergir del flujo real. **El de registro es el único de un solo uso**: lo consume `POST /api/auth/register`, y si lo reusás da `410 GONE` (la página va a `/expired`).
+Detalles que importan:
 
-También avisa si el slug no existe o si el torneo está inactivo, aclarando que en ese caso el dispatcher real ignoraría el mensaje.
+- **El token del POST viaja en el body**, no en la ruta: el log de requests
+  registra el path, y un token de autorización no tiene por qué quedar escrito.
+- El token se **reclama atómicamente** (SET NX) al empezar y **se devuelve si la
+  validación falla**: así un formulario rechazado no quema el link, y un link ya
+  usado da `410`.
+- La fecha se carga como **hora de Bolivia** (`America/La_Paz`, sin horario de
+  verano) y se guarda en UTC. Sin eso, un evento de las 22:00 empezaría a las 18:00.
+- El **slug** es lo que el pagador escribe en la glosa de la transferencia, así
+  que conviene que sea corto. El formulario lo propone desde el nombre.
 
-Seed slugs: `torneo-intercolegial` y `torneo-copa-paz` son activos, `torneo-relampago` no, y `torneo-online-arena` es el único **online**.
+### Probar sin WhatsApp
 
-Para probar los dos caminos de un usuario que ya existe hay teléfonos en el seed: `77777777` (Admin, **sin** cuenta → manda a verificar) y `780000000` (Carlos, **con** cuenta → va directo a pagar).
-
-Para probar los dos caminos de un usuario que ya existe hay teléfonos en el seed: `77777777` (Admin, **sin** cuenta de Lichess → manda a verificar) y `780000000` (Carlos, **con** cuenta → va directo a pagar).
-
-### Modalidad y cuenta de Lichess
-
-`tournaments.isOnline` decide si hace falta cuenta de Lichess. En `users`, `lichessId` y `lichessUsername` son **opcionales y sin `unique`**: un torneo presencial no requiere Lichess, y dos personas pueden compartir la misma cuenta (padre e hijo).
-
-**El registro no acepta identidad de Lichess.** `POST /api/auth/register` solo crea la persona; no tiene campos `lichessId`/`lichessUsername`. La cuenta se vincula aparte, vía OAuth, en la vista dedicada `/verificar-lichess`. Eso es lo que impide que alguien se registre con la cuenta de otro: la identidad la escribe el servidor en el callback, no el navegador.
-
-| Paso | Dónde |
-|---|---|
-| 1. Crear la persona | `/register?t=<registerToken>` → `POST /api/auth/register` |
-| 2. Vincular Lichess (**solo online**) | `/verificar-lichess?t=<lichessLink>&next=<checkout>` |
-| 3. Inscribirse y pagar | `/checkout?t=<checkoutToken>` (el pago todavía no existe server-side) |
-
-**El registro siempre termina en el checkout**, porque inscribirse requiere pagar. Como `POST /api/auth/register` consume el token de registro, la misma respuesta emite un `checkoutToken` (de 30 minutos, no 5: el camino online pasa por el OAuth antes de llegar a pagar).
-
-- Torneo **presencial** → `lichessLink: null` → la página va directo a `/checkout?t=<checkoutToken>`.
-- Torneo **online** → `lichessLink` presente → va a `/verificar-lichess` con `next` apuntando al checkout, así después de vincular la cuenta vuelve solo a pagar.
-
-### Quién entra por dónde
-
-El **dispatcher** (el botón de WhatsApp) y la **página de registro** resuelven lo mismo con el mismo criterio, así que las dos entradas son simétricas:
-
-| Situación | A dónde manda el botón |
-|---|---|
-| Teléfono desconocido | `/register?t=<registerToken>` |
-| Ya existe, torneo presencial | `/checkout?t=<checkoutToken>` |
-| Ya existe, online **con** cuenta vinculada | `/checkout?t=<checkoutToken>` |
-| Ya existe, online **sin** cuenta | `/verificar-lichess?t=<lichessLink>&next=<checkout>` — directo a verificar, y de ahí al checkout |
-
-El botón dice lo que va a pasar: "Registro de usuario", "Realizar pago" o "Verificar cuenta" según la fila.
-
-El checkout **igual exige** la cuenta para torneos online. No es redundante: es la red de seguridad para quien entra con un link viejo o pierde el `next` en el camino.
-
-Cómo viaja la identidad en el paso 2: `GET /api/auth/lichess?rt=<token>` guarda el teléfono junto al `verifier` PKCE en Redis; el callback canjea el código, lee la cuenta de Lichess y **escribe `users.lichessId` del lado del servidor**. El navegador nunca ve ni envía la identidad. `/api/auth/lichess/status?t=<token>` informa el resultado (`pending`, `ok`, `not_clean`, `too_few_games`, `oauth_failed`, `user_not_found`) y es lo que consulta la vista mientras espera.
-
-**La vista no confirma nada:** cuando el estado es `ok` la cuenta ya está guardada (la escritura la hizo el callback), así que muestra el overlay de carga y sigue sola a `next`. No hay pantalla de "vinculamos la cuenta" ni botón de continuar: era un toque sin ninguna decisión, y el checkout igual muestra con qué cuenta quedó.
-
-Los errores se parten en dos, según si reintentar puede servir:
-
-| Resultado | Qué hace la vista |
-|---|---|
-| `oauth_failed`, `too_few_games`, `not_clean` | Pantalla de error con el motivo y la barra de acción (con el texto ajustado: "Reintentar" o "Probar con otra cuenta") |
-| `user_not_found` | Va a `/expired`, porque reintentar el OAuth falla siempre: el problema es que no existe el registro, y la salida es pedir un link nuevo |
-
-Sin `next` en la URL la vista también corta a `/expired`, y lo hace **al inicio**: no tiene sentido que el usuario complete el OAuth para que después no sepamos a dónde mandarlo.
-
-El checkout además **exige** la cuenta para torneos online, y eso cubre a los usuarios que ya existen: `GET /api/checkout/:token` devuelve `isOnline`, `hasLichess` y, si falta, un `lichessLink` nuevo para ir a verificar y volver. Es el caso de alguien que se registró para un torneo presencial y después quiere uno virtual — ese camino entra directo por el checkout, sin pasar por el registro.
-
-### Modelo de torneo
-
-`tournaments` guarda lo mínimo (9 campos): `name`, `slug`, `startTime`, `isOnline`, `onlineUrl`, `inscriptionPrice`, `pageHtml` y `isActive`. El torneo en Lichess lo arma **el organizador** por su cuenta y acá solo se guarda el link en `onlineUrl`; todo el resto del evento (sede, ritmo, variante, premios, cupo) vive en `pageHtml`, que diseña el organizador.
-
-`inscriptionPrice` es el `amount` de la inscripción (centavos, 0 = gratis).
-
-**`pageHtml` todavía NO se renderiza.** Falta decidir cómo se sanitiza: inyectar HTML del organizador en el origen propio es un vector de stored XSS (accede a cookies, sesión y a la API same-origin). Y como todavía no hay login, no hay forma de restringir quién crea torneos.
-
-Criterio de la tabla: **no se agregan columnas hasta que haya código que las lea**. Por eso se sacaron `registrationDeadline`, `maxParticipants`, `rounds`, `systemOfPlay`, `clockTime` y compañía — se usaban solo en `routes/tournaments.ts`, que está desmontado y escrito contra un esquema anterior. Cuando exista el código que las aplique, se agregan de vuelta.
-
-Para probar ambos caminos:
-
-```sh
-make generate-url PHONE=799999999 SLUG=torneo-intercolegial   # nuevo + presencial: register -> /checkout
-make generate-url PHONE=799999998 SLUG=torneo-online-arena    # nuevo + online: register -> /verificar-lichess -> /checkout
-```
-
-El paso 2 necesita una cuenta real de Lichess: es lo único del flujo que no se puede verificar con `curl`.
-
-El mismo helper está disponible dentro del repo de la API:
-
-```sh
-bun run dev:generate-url <phone> <slug>
-```
-
-Remove a test registration with:
-
-```sh
-docker compose --env-file .env.development exec -T dev-api \
-  sqlite3 /peonveloz/api/data/app.db "DELETE FROM users WHERE phone='799999999';"
-```
-
-To exercise the real dispatcher instead, pause the worker so the job is not consumed, POST a fake inbound message, then read the token back out of the queue:
+Para no disparar mensajes reales, parar el worker primero (ver la trampa 1 de
+`HANDOFF.md`):
 
 ```sh
 docker compose --env-file .env.development stop dev-worker
 
 curl -s -X POST http://localhost:4000/api/webhook-meta \
   -H 'Content-Type: application/json' \
-  -d '{"entry":[{"changes":[{"value":{"messages":[{"from":"799999997","type":"text","text":{"body":"quiero torneo-intercolegial"}}]}}]}]}'
+  -d '{"entry":[{"changes":[{"value":{"messages":[{"from":"799123456","type":"text","text":{"body":"hola"}}]}}]}]}'
 
-docker compose --env-file .env.development exec -T redis redis-cli LRANGE whatsapp:queue 0 -1 \
-  | jq -r '.[0].response.url'
+# ⚠️ cada línea de LRANGE es un documento JSON: NO le apliques .[]
+docker compose --env-file .env.development exec -T redis \
+  redis-cli LRANGE whatsapp:queue 0 -1 | jq -r '.messages[] | .body? // .bodyText? // .type'
 
 docker compose --env-file .env.development start dev-worker
 ```
 
-A phone that already has a user gets a `/checkout/:token` link instead of a register link.
+Y para probar el formulario de alta sin esperar el mensaje del bot:
+
+```sh
+docker compose --env-file .env.development exec -T dev-api bun -e \
+  "import {createNewEventToken} from '/peonveloz/api/src/lib/whatsapp/tokens.ts'; console.log(createNewEventToken('59173505230'))"
+# abrí http://localhost:4321/new-event?t=<lo que imprimió>
+```
+
+Teléfonos y slugs del seed: ver el final de `HANDOFF.md`.
+
+### Lichess
+
+`events.isOnline` decide si hace falta cuenta de Lichess. La cuenta vive en
+**`players`** (`lichessId`, `lichessUsername`), es opcional y **sin `unique`**:
+un evento presencial no la requiere, y dos personas pueden compartir la misma
+cuenta (padre e hijo).
+
+**El registro no acepta identidad de Lichess.** La escribe el servidor en el
+callback del OAuth, nunca el navegador — eso es lo que impide que alguien se
+registre con la cuenta de otro.
+
+`GET /api/auth/lichess?rt=<token>` guarda el teléfono junto al `verifier` PKCE en
+Redis; el callback canjea el código, lee la cuenta y la escribe del lado del
+servidor. `/api/auth/lichess/status?t=<token>` informa el resultado (`pending`,
+`ok`, `not_clean`, `too_few_games`, `oauth_failed`, `user_not_found`) y es lo que
+consulta `/verificar-lichess` mientras espera.
+
+**La vista no confirma nada:** cuando el estado es `ok` la cuenta ya está
+guardada, así que muestra el overlay y sigue sola al `next`. Los errores se
+parten en dos: los reintentables (pantalla de error) y `user_not_found` (va a
+`/expired`, porque reintentar el OAuth falla siempre).
+
+> `MIN_RATED_GAMES = 100` en `api/src/lib/lichess-oauth.ts:18` bloquea cuentas
+> nuevas de Lichess: bajalo temporalmente para poder probar el OAuth feliz.
+
+### Modelo de evento
+
+`events` guarda lo mínimo: `name`, `slug`, `startTime`, `isOnline`, `onlineUrl`,
+`inscriptionPrice`, `marketingText`, `flyerUrl`, `paymentQrUrl` e `isActive`.
+
+- El evento en Lichess lo arma **el organizador** por su cuenta; acá solo se
+  guarda el link en `onlineUrl`.
+- **`marketingText`** es el texto que el bot manda al chat; el **`flyerUrl`** y el
+  **`paymentQrUrl`** son imágenes que el worker **descarga y sube a Meta**, así
+  que las URLs no necesitan ser públicas (Meta nunca las visita).
+- `inscriptionPrice` está en centavos (0 = gratis) y es el monto que se **congela
+  en cada pago**: si el organizador cambia el precio después, lo ya acordado no
+  se mueve.
+
+> La vieja columna `pageHtml` **se eliminó**: ya no hay una página por evento.
+
+Criterio de la tabla: **no se agregan columnas hasta que haya código que las
+lea.** El detalle campo por campo está en `api/docs/modelo-de-datos.md`.
 
 ## Backend API
 
@@ -320,7 +300,11 @@ Drizzle derives `DATABASE_URL=file:${SQLITE_PATH}` internally.
 
 ### Redis
 
-Redis runs as a separate Compose service using the official `redis:7-alpine` image. The API uses it for login rate limiting, verification tokens, and password reset tokens. The WhatsApp worker uses it as a persistent job queue for outgoing messages.
+Redis runs as a separate Compose service using the official `redis:7-alpine` image. Hoy se usa para tres cosas:
+
+- la **cola de trabajos** del worker (`whatsapp:queue`, `whatsapp:dead`);
+- las **marcas de tokens de un solo uso** (`used_token:<hash>`), que es lo que hace que un link de registro o de alta no se pueda reusar;
+- el **`verifier` PKCE** del OAuth de Lichess, mientras dura el handshake.
 
 | Config | Default | Purpose |
 |--------|---------|---------|
@@ -333,11 +317,13 @@ Inspect Redis from the host:
 redis-cli -h localhost -p 6379 ping
 ```
 
-Redis is configured with `--save 900 1` (RDB snapshot every 15 minutes if at least one key changed). This ensures WhatsApp queued jobs survive a Redis restart. Rate-limiting and token data remains ephemeral by design since they expire automatically via TTL.
+Redis is configured with `--save 900 1` (RDB snapshot every 15 minutes if at least one key changed), so queued jobs survive a Redis restart. Los datos de tokens son efímeros a propósito: expiran solos por TTL.
+
+> **Un crash de Redis puede perder hasta 15 minutos.** Hoy eso significa mensajes sin mandar y marcas de un solo uso que se pierden (un link volvería a servir). **Los pagos y los comprobantes no corren ese riesgo: viven en SQLite.** Si algún día algo con plata pasa a vivir solo en Redis, cambiá `appendonly` a `yes`.
 
 Redis uses `restart: unless-stopped` so Docker restarts it after an unexpected exit. Compose also defines a Redis healthcheck using `redis-cli ping`; the development stack checks once per minute, and the production-like stack checks every 10 seconds. `dev-api` and `prod-api` wait for Redis to become healthy before starting.
 
-When Redis is unreachable the API fails open: rate limiting is skipped, and only a 500ms artificial delay protects against brute-force attempts. Redis recovers automatically within 30 seconds of becoming available again.
+Cuando Redis no está, la API **no se cae**: la cola de WhatsApp loguea y pierde el job (fail-open), y las marcas de un solo uso no se pueden escribir, así que `markTokenAsUsed` devuelve `false` y el alta de eventos rechaza la creación — es preferible a dejar reusar un link. Redis se recupera solo cuando vuelve.
 
 The API `/health` endpoint reports dependency status:
 
@@ -375,12 +361,11 @@ make logs                                # all services including worker
 
 Each outgoing message gets up to 3 retry attempts on failure. After 3 failures, the job moves to `whatsapp:dead` for manual inspection. Common failure reasons: invalid access token, Meta API downtime, rate limiting.
 
-**Adding a new automated response** requires changes in two files inside `api/src/lib/whatsapp/`:
+Un job lleva una **lista de mensajes en orden** (`messages: OutgoingMessage[]`), y el worker manda uno por uno. Si el tercero falla, el reintento arranca **desde el que falló**, no desde el principio: nadie recibe el flyer dos veces.
 
-| File | What to add |
-|------|-------------|
-| `dispatcher.ts` | New `if` condition that calls `enqueueJob(from, triggerName)` |
-| `whatsapp-worker.ts` | New handler in the `handlers` map that sends the appropriate message |
+Un job también puede llevar un **comprobante entrante** (`receipt`). En ese caso el worker lo primero que hace es bajarlo de Meta, verificar el sha256 y guardarlo: si eso falla, el job vuelve a la cola y los mensajes **no salen**, porque no se le puede contestar "recibí tu comprobante" a algo que no tenemos.
+
+**Para agregar una respuesta nueva** alcanza con un archivo: el dispatcher arma el array de mensajes y llama a `enqueueJob(from, trigger, messages)`. **No hay un mapa de handlers**: el worker solo manda lo que dice el job. Para un tipo de mensaje nuevo (por ejemplo una encuesta) hay que agregar la variante a `OutgoingMessage` en `queue.ts` y su rama en `sendMessage` (`whatsapp-worker.ts`).
 
 ### Environment Variables
 
@@ -388,20 +373,26 @@ All API runtime configuration is passed through the Docker Compose environment b
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `CSRF_SECRET` | Yes | — | HMAC key for CSRF token signing |
-| `TOKEN_SIGNING_KEY` | Yes | — | HMAC-SHA256 key for register/checkout token signing |
-| `INTERNAL_API_SECRET` | Yes | — | Shared secret for internal API communication (via X-Internal-Secret header) |
-| `REDIS_URL` | No | `redis://redis:6379` | Redis connection for rate limiting and tokens inside Compose |
+| `SQLITE_PATH` | Yes | — | Ruta de la base. **La necesitan el api y el worker**, con el mismo valor |
+| `CSRF_SECRET` | Yes | — | Se exige en `lib/config.ts`, pero **el CSRF se eliminó**: hoy no firma nada |
+| `TOKEN_SIGNING_KEY` | Yes | — | HMAC-SHA256 de los tokens (registro, alta de evento, link de Lichess) |
+| `REDIS_URL` | No | `redis://redis:6379` | Redis para la cola y las marcas de tokens |
 | `LICHESS_CLIENT_ID` | Yes | — | Lichess OAuth client ID for chess tournament integration |
-| `PUSH_NOTIFICATION_API_KEY` | Yes | — | Push notification API key for mobile alerts |
+| `PUSH_NOTIFICATION_API_KEY` | Yes | — | Clave del `X-API-Key` que manda la app Android (`bridger`) |
 | `FRONTEND_URL` | Yes | — | Allowed CORS origin (comma-separated) |
 | `PUBLIC_URL` | Yes | — | Public base URL for links sent via WhatsApp, emails, etc. |
-| `NODE_ENV` | No | `development` | Controls cookie Secure flag and session cookie name |
+| `NODE_ENV` | No | `development` | `development` \| `test` \| `production` |
+| `RECEIPTS_DIR` | No | `data/receipts` | Dónde viven los comprobantes. Relativo al cwd; cae dentro del volumen de datos |
 | `WHATSAPP_VERIFY_TOKEN` | No | — | WhatsApp webhook handshake verification token |
 | `WHATSAPP_APP_SECRET` | No | — | HMAC-SHA256 secret for webhook signature validation |
 | `WHATSAPP_ACCESS_TOKEN` | No | — | Meta WhatsApp Cloud API access token for sending messages |
 | `WHATSAPP_PHONE_NUMBER_ID` | No | — | WhatsApp Business phone number ID from Meta dashboard |
+| `WHATSAPP_PUBLIC_PHONE` | No | — | El número del bot como aparece en un link `wa.me` (no es el ID de Meta) |
 | `WHATSAPP_API_URL` | No | `https://graph.facebook.com/v22.0` | Meta Graph API base URL |
+
+`SQLITE_PATH` y el volumen de datos son **lo que hace que el api y el worker vean
+la misma base**. Si agregás un import que toque SQLite en un proceso nuevo,
+acordate de las dos cosas (ver la trampa 4 de `HANDOFF.md`).
 
 In development, `LICHESS_CLIENT_ID` defaults to empty (Lichess integration is skipped but the API does not crash). In production (`docker-compose.prod.yml`), it uses `${LICHESS_CLIENT_ID:?}` and fails fast when the client ID is not set.
 
@@ -481,7 +472,13 @@ The API serves everything from a single origin — no separate frontend containe
 
 ## Notes
 
-Development SQLite data is stored in the `dev-api-sqlite-data` Docker volume. Production API SQLite data is stored in the `prod-api-sqlite-data` Docker volume. If you run `docker compose down -v`, both local API databases are deleted.
+Development SQLite data is stored in the `dev-api-sqlite-data` Docker volume — **the api and the worker both mount it**, because the worker writes payments too. Production API SQLite data is stored in the `prod-api-sqlite-data` Docker volume (also shared with `prod-worker`). If you run `docker compose down -v`, both local API databases are deleted.
+
+Los **comprobantes** (`data/receipts/`) viven dentro de ese mismo volumen, con el sha256 como nombre de archivo. No se sirven por HTTP: son la prueba de un pago, no un asset público.
+
+> ⚠️ **`make up` corre `db:seed` siempre, y el seed borra y recrea los datos.**
+> Si querés levantar conservando lo que tenías:
+> `docker compose --env-file .env.development up -d`.
 
 If you previously ran the old Vue `dev-ui`, its volumes are no longer used. Remove them once:
 

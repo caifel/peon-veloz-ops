@@ -1,7 +1,7 @@
 COMPOSE=docker compose --env-file .env.development
 COMPOSE_PROD=docker compose -f docker-compose.prod.yml --env-file .env.production
 
-.PHONY: build up down logs api-types api-types-check api-test db-migration-refresh db-migrate db-seed db-reset db-rebuild shell-api sqlite-api logs-api worker worker-logs generate-url status clean prod prod-api prod-worker smoke-test verify hooks-install help h
+.PHONY: build up down logs api-types api-types-check api-test db-migration-refresh db-migrate db-seed db-reset db-rebuild shell-api sqlite-api logs-api worker worker-logs status clean prod prod-api prod-worker smoke-test verify hooks-install help h
 
 # @group Build
 
@@ -65,12 +65,6 @@ worker: ## [dev] Start the WhatsApp worker.
 
 worker-logs: ## [dev] Follow dev-worker container logs.
 	$(COMPOSE) logs -f dev-worker
-
-# @group Dev URLs
-
-generate-url: ## [dev] Generate the URL the dispatcher would send (register, checkout or verify): make generate-url PHONE=799999999 SLUG=torneo-intercolegial
-	@$(COMPOSE) up -d dev-api >/dev/null 2>&1 || { echo "error: could not start dev-api — run 'make up' first" >&2; exit 1; }
-	@$(COMPOSE) exec -T dev-api bun scripts/dev-generate-url.ts "$(PHONE)" "$(SLUG)"
 
 # @group Utilities
 
