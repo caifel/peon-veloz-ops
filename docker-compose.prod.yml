@@ -38,6 +38,8 @@ services:
       WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET}
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+      # Número público del bot (formato internacional sin '+') para los links wa.me.
+      WHATSAPP_PUBLIC_PHONE: ${WHATSAPP_PUBLIC_PHONE}
       WHATSAPP_API_URL: ${WHATSAPP_API_URL}
     ports:
       - "${API_PORT:?API_PORT}:8081"
@@ -56,11 +58,19 @@ services:
     restart: unless-stopped
     environment:
       REDIS_URL: ${REDIS_URL:?REDIS_URL}
+      # El worker escribe en la base (guarda el comprobante y lo cuelga del pago),
+      # así que necesita la misma ruta que el api para abrir el MISMO archivo.
+      SQLITE_PATH: ${SQLITE_PATH:?SQLITE_PATH}
       WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
       WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET}
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
       WHATSAPP_API_URL: ${WHATSAPP_API_URL}
+    volumes:
+      # El mismo volumen de datos que el api —aunque se llame `-sqlite-`, ahora
+      # guarda también los comprobantes—. Sin esto el worker crearía un
+      # `/app/data/app.db` propio, vacío y sin tablas, y fallaría al guardar.
+      - prod-api-sqlite-data:/app/data
     depends_on:
       redis:
         condition: service_healthy
