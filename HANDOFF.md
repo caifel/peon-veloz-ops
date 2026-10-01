@@ -162,14 +162,26 @@ volumen de datos y recibe `SQLITE_PATH`), `Makefile` (se fue `generate-url`),
 > bloquea cuentas nuevas de Lichess. Bajalo temporalmente para probar el OAuth
 > feliz y devolvelo. Sigue sin verificarse de punta a punta.
 
+> ⚠️ **Antes de probar el pago de punta a punta:** los eventos del seed tienen
+> `flyerUrl` y `paymentQrUrl` en **null a propósito** (`seed.ts:146`), así que hoy
+> el paso 2 manda el marketing y el instructivo pero **ningún QR**, y deja un
+> `warn` en el log del worker. Para ver el paso completo hay que cargar las dos
+> URLs desde `/new-event` (el formulario las pide).
+>
+> **No hay upload:** son URLs. El worker **las baja y las sube a Meta**, así que
+> la imagen no necesita ser pública, pero sí alcanzable desde el contenedor del
+> worker. Decidir dónde los va a alojar el organizador es una tarea abierta.
+
 ### P1 — seguridad (encontrado al analizar la app Android)
 
 - **La API key está hardcodeada en el APK** (`bridger_4aad31f8…`) y ahora
   autoriza la ingesta que después confirma pagos. Rotarla no alcanza: hay que
   sacarla del APK.
-- **`api/notifications.txt` sigue trackeado en git** con nombres y montos reales
-  de terceros (está en `.gitignore:41`, pero eso no destrackea). Falta
-  `git rm --cached notifications.txt`.
+- **`api/notifications.txt` sigue trackeado en git** y **ya está publicado** en
+  GitHub desde el commit `90edaaa` (nombres y montos reales de terceros). Está en
+  `.gitignore:41`, pero eso no destrackea. Ojo: `git rm --cached` **no lo borra**,
+  porque el historial ya lo tiene — las opciones reales son reescribir el
+  historial o aceptar que está público. Decisión del dueño, no del agente.
 - La app apunta a `192.168.1.42` y esta máquina es `192.168.1.23`;
   `network_security_config.xml` solo permite cleartext a `.9` y `.42`.
 - **La firma del webhook sigue siendo opcional** (`routes/webhook-meta.ts`).
