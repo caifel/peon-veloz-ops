@@ -62,8 +62,8 @@ El bot es la única entrada. No hay página pública de torneo.
 | 2 | Elige un evento → se crea la **intención de pago** (`pending`, precio congelado) y recibe marketing + flyer + **QR de pago** | `lib/payments.ts` (`startPayment`), `entry.ts` (`paymentMessages`) | ✅ |
 | 3 | Manda el **comprobante** (imagen) → el worker la baja de Meta, verifica el sha256, la guarda en `data/receipts/` y la cuelga del pago | `dispatcher.ts` → `queue.ts` → `workers/whatsapp-worker.ts` → `lib/receipts.ts` | ✅ |
 | 4 | Llega la **notificación del banco** (app Android) → se guarda clasificada (`payment`/`other`/`unparsed`) | `routes/push-notification.ts`, `lib/bank-notifications/parse.ts` | ✅ |
-| 5 | **Cuadre**: comprobante + notificación → el pago pasa a `confirmed` y sale el formulario de registro | — | ❌ **tarea 9** |
-| 6 | El jugador completa el formulario → se crea `players` + `inscriptions` | — | ❌ **tareas 10-12** |
+| 5 | **Confirmación**: comprobante + notificación → el pago pasa a `confirmed` y sale el formulario de registro | — | ❌ **P0 #1, a mano** |
+| 6 | El jugador completa el formulario → se crea `players` + `inscriptions` | — | ❌ **P0 #2 (tareas 10-11)** |
 
 **El admin va por otro camino**: escribe `crear-evento` en el chat → el bot le
 manda un link con token (60 min) → `/new-event` → el POST crea el evento y
@@ -164,19 +164,48 @@ volumen de datos y recibe `SQLITE_PATH`), `Makefile` (se fue `generate-url`),
 
 ## Pendientes, por prioridad
 
-### P0 — el bloqueo y lo que sigue
+### P0 — por dónde sigue
 
-1. **Tarea 7: extracción con IA del comprobante** → columnas `receiptAi*`.
-   **Necesita proveedor + API key.** Es lo que desbloquea la 9. **No inventes un
-   proveedor: preguntá.**
-2. **Tarea 9: el motor de cuadre.** La regla del nombre ya está decidida y
-   probada; falta la ventana temporal y juntar las dos puntas. Ojo: la
-   notificación puede llegar **antes** que el comprobante, así que el cuadre
-   corre en los dos momentos y **el que llega segundo completa el par**.
-3. **Tareas 10-12 (registro):** token con `paymentId`, endpoint que crea
-   `inscriptions`, y Lichess por jugador (`playerId` ya viaja en el token).
-4. **Tarea 14:** mensaje final de confirmación.
-5. **Mantener este archivo al día** — es el que lee el próximo chat.
+> **DECIDIDO (2026-09-29): el círculo se cierra primero con confirmación manual del
+> admin, y la IA viene después como automatización. No al revés.**
+>
+> Motivos: sin depender del proveedor de IA el flujo queda usable ya; el juicio
+> sobre la plata lo pone una persona; y la pantalla de confirmación se necesita
+> igual para los casos dudosos, porque la IA nunca va a poder decidir sola sobre un
+> comprobante ilegible. **No construir el cuadre automático (tarea 9) antes que
+> esto.**
+
+**1. La confirmación manual — esto es lo que cierra el círculo.** El admin tiene que
+poder ver los pagos pendientes con la evidencia y confirmar. En este orden:
+
+   a. Un comando nuevo del admin (ej. `pagos`) que liste los `payments` en
+      `pending` con lo que se sabe de cada uno: monto, evento, contacto, si tiene
+      comprobante, y si hay una notificación del banco sin cruzar.
+   b. Al elegir uno, el admin **tiene que ver el comprobante**.
+      ⚠️ **Ojo acá, es el pedido que más tiempo cuesta si no está anotado:**
+      `payments.receiptPath` es una **ruta local**, y `sendImageMessage(to, url)`
+      **baja una URL** — no sirve para un archivo guardado. Hay que leer los bytes
+      del disco y subirlos (`uploadMedia` ya resuelve la parte de Meta).
+   c. Confirmar → `status='confirmed'` + `confirmedAt`, y si corresponde colgar la
+      notificación (`bank_notifications.matchedPaymentId`). **Hoy esos tres campos
+      no los escribe ningún código.**
+   d. Avisarle al jugador y mandarle el formulario de registro (10-11). Sin eso,
+      confirmar no le sirve de nada.
+   e. **Cambiar el texto de `api/src/lib/whatsapp/dispatcher.ts:88`** ("te aviso
+      cuando esté confirmado") por uno que sea verdad. Mientras el aviso no exista,
+      ese texto es una promesa falsa.
+      **Si el número de WhatsApp está vivo, esto va primero:** cualquiera que le
+      escriba al bot recibe la lista, elige un evento, transfiere y manda el
+      comprobante. No hace falta invitarlo.
+
+**2. Después, en este orden:** 10-11 (formulario e `inscriptions`), 12 (Lichess por
+jugador), 14 (mensaje final). Recién entonces la **7** (extracción con IA) y la **9**
+(el cuadre automático), como automatización de lo mismo que hace el admin a mano.
+
+> La 9, cuando llegue: la regla del nombre ya está decidida y probada
+> (`payer-name.ts`), falta la ventana temporal. Ojo con esto: la notificación puede
+> llegar **antes** que el comprobante, así que el cuadre corre en los dos momentos y
+> **el que llega segundo completa el par**.
 
 > Para la 12: `MIN_RATED_GAMES = 100` en `api/src/lib/lichess-oauth.ts:18`
 > bloquea cuentas nuevas de Lichess. Bajalo temporalmente para probar el OAuth
@@ -191,6 +220,8 @@ volumen de datos y recibe `SQLITE_PATH`), `Makefile` (se fue `generate-url`),
 > **No hay upload:** son URLs. El worker **las baja y las sube a Meta**, así que
 > la imagen no necesita ser pública, pero sí alcanzable desde el contenedor del
 > worker. Decidir dónde los va a alojar el organizador es una tarea abierta.
+
+**3. Mantener este archivo al día** — es el que lee el próximo chat.
 
 ### P1 — seguridad (encontrado al analizar la app Android)
 

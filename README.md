@@ -170,7 +170,7 @@ worker al chat.
 | 2 | Elige un evento → se crea el pago (`pending`, con el precio congelado) y recibe el **QR** | ✅ |
 | 3 | Manda el **comprobante** (imagen) → el worker lo baja, verifica el sha256 y lo guarda | ✅ |
 | 4 | Llega la **notificación del banco** (app Android) | ✅ |
-| 5 | **Cuadre**: comprobante + notificación → pago `confirmed` + formulario | ❌ |
+| 5 | **Confirmación**: comprobante + notificación → pago `confirmed` + formulario | ❌ *(la hace el admin a mano primero, ver P0 del HANDOFF)* |
 | 6 | El jugador completa el formulario → `players` + `inscriptions` | ❌ |
 
 Cada paso, con el archivo que lo implementa, está en `HANDOFF.md`.
